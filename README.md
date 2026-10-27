@@ -45,7 +45,39 @@ python -m vigia.main        # tecla q para salir
 python -m vigia.web         # http://localhost:8000
 ```
 
-### Diagnóstico y tests
+Rutas:
+
+| Ruta | Qué devuelve |
+|---|---|
+| `/` | dashboard: video en vivo + estado + feed + historial con filtros |
+| `/video.mjpg` | stream MJPEG con cajas, IDs de personas y zonas |
+| `/estado` | JSON con FPS, personas, objetos y estado de la cámara |
+| `/eventos` | JSON con el feed reciente (en memoria) |
+| `/historial` | JSON de SQLite; `?tipo=`, `?desde=AAAA-MM-DD`, `?limite=1..500` |
+| `/clip/<fichero>.mp4` | clip guardado al dispararse un evento |
+
+## Configuración
+
+Copia `config.example.yaml` a `config.yaml` y ajusta lo que necesites. Si el
+fichero no existe se usan los valores por defecto; si una clave está mal
+escrita, Vigia avisa en el log y usa el valor por defecto en vez de romperse.
+
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `almacen` | `vigia.db` | fichero SQLite de eventos |
+| `permanencia_seg` | `30` | segundos para disparar `permanencia` |
+| `timeout_persona_seg` | `10` | segundos sin ver a alguien para `persona_salio` |
+| `timeout_objeto_seg` | `10` | segundos sin ver un objeto para `objeto_desaparece` |
+| `vigilar_desaparicion` | `[]` | clases COCO cuyo aparecer/desaparecer registrar |
+| `zonas` | `{}` | `nombre: [x1, y1, x2, y2]` en píxeles |
+| `franjas` | `[]` | `{desde: "HH:MM", hasta: "HH:MM"}`; fuera de ellas no hay eventos |
+| `guardar_clips` | `true` | guardar un MP4 al dispararse `persona_entra`, `permanencia` u `objeto_desaparece` |
+| `notificar` | `true` | lanzar un toast de Windows con esos eventos |
+
+Los clips se escriben en `clips/` (ignorada por git) y los eventos en SQLite;
+ninguno de los dos se limpia solo todavía.
+
+## Diagnóstico y tests
 
 ```bash
 python -m vigia.probar_camara   # qué cámara/backend funciona

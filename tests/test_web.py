@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import vigia.web as web
@@ -159,3 +160,76 @@ def test_bucle_avisa_si_la_camara_esta_caida():
     jpeg, _, _, _, camara_ok = estado.snapshot()
     assert camara_ok is False
     assert jpeg
+
+
+class _ClipsFalso:
+    def __init__(self, carpeta):
+        self.carpeta = carpeta
+
+
+def test_bucle_avisa_si_el_modelo_no_carga(monkeypatch):
+    class DetectorRoto:
+        def __init__(self, *a, **k):
+            raise RuntimeError("sin pesos yolo11n.pt")
+
+    monkeypatch.setattr(web, "Detector", DetectorRoto)
+    estado = Estado()
+    web.bucle_procesamiento(estado, cam=_CamaraFalsa(), detector=None,
+                            config={"timeout_persona_seg": 10},
+                            motor=object())
+    jpeg, fps, dets, ids, camara_ok = estado.snapshot()
+    assert jpeg and camara_ok is False and dets == [] and fps == 0.0
+
+
+def test_historial_limita_el_limite(monkeypatch, cliente):
+    visto = {}
+
+    class AlmacenFalso:
+        def historial(self, limite=100, tipo=None, desde=None):
+            visto["limite"] = limite
+            return []
+
+    monkeypatch.setattr(web, "_almacen", AlmacenFalso())
+    assert cliente.get("/historial?limite=-1").status_code == 200
+    assert 1 <= visto["limite"] <= 500
+    assert cliente.get("/historial?limite=99999").status_code == 200
+    assert visto["limite"] == 500
+
+
+def test_clip_rechaza_lo_que_no_es_mp4(monkeypatch, tmp_path):
+    carpeta = tmp_path / "clips"
+    carpeta.mkdir()
+    (carpeta / "notas.txt").write_bytes(b"hola")
+    monkeypatch.setattr(web, "_clips", _ClipsFalso(carpeta))
+    with pytest.raises(HTTPException) as exc:
+        web.clip("notas.txt")
+    assert exc.value.status_code in (400, 404)
+
+
+def test_clip_rechaza_salir_de_la_carpeta(monkeypatch, tmp_path):
+    carpeta = tmp_path / "clips"
+    carpeta.mkdir()
+    (tmp_path / "secreto.mp4").write_bytes(b"x")
+    monkeypatch.setattr(web, "_clips", _ClipsFalso(carpeta))
+    for malo in ["../secreto.mp4", "..\\secreto.mp4", "noexiste.mp4"]:
+        with pytest.raises(HTTPException) as exc:
+            web.clip(malo)
+        assert exc.value.status_code in (400, 404)
+
+
+def test_clip_sirve_un_mp4_de_la_carpeta(monkeypatch, cliente, tmp_path):
+    carpeta = tmp_path / "clips"
+    carpeta.mkdir()
+    (carpeta / "a.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42datos")
+    monkeypatch.setattr(web, "_clips", _ClipsFalso(carpeta))
+    r = cliente.get("/clip/a.mp4")
+    assert r.status_code == 200
+    assert r.content.startswith(b"\x00\x00\x00\x18ftyp")
+
+
+def test_clip_404_si_clips_desactivados(monkeypatch):
+    monkeypatch.setattr(web, "_clips", None)
+    with pytest.raises(HTTPException) as exc:
+        web.clip("a.mp4")
+    assert exc.value.status_code == 404
+

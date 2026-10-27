@@ -37,25 +37,22 @@ class RastreadorPersonas:
         ahora = time.monotonic()
         eventos: list[tuple[str, int]] = []
 
-        # salidas: dentro=True y sin verse durante timeout
+        # salidas: sin verse durante timeout. Se borra el estado para que el
+        # diccionario no crezca sin limite (ByteTrack puede crear miles de IDs
+        # en una sesion larga) y para que una reaparicion vuelva a anunciarse.
         for pid, st in list(self._por_id.items()):
-            if st.dentro and ahora - st.ultima_vez > self.timeout_seg:
-                st.dentro = False
+            if ahora - st.ultima_vez > self.timeout_seg:
+                del self._por_id[pid]
                 eventos.append((EVENTO_SALIO, pid))
                 log.info("persona_salio id=%s", pid)
 
-        # entradas: nuevo ID o ID que ya se le anuncio salida
+        # entradas: cualquier ID que no estabamos siguiendo
         for pid in ids_presentes:
             st = self._por_id.get(pid)
             if st is None:
                 self._por_id[pid] = _PersonaEstado(ahora)
                 eventos.append((EVENTO_ENTRA, pid))
                 log.info("persona_entra id=%s", pid)
-            elif not st.dentro:
-                # ya se anuncio su salida -> esta reaparicion es una entrada nueva
-                self._por_id[pid] = _PersonaEstado(ahora)
-                eventos.append((EVENTO_ENTRA, pid))
-                log.info("persona_entra (reentrada) id=%s", pid)
             else:
                 st.ultima_vez = ahora
         return tuple(eventos)

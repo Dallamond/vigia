@@ -84,12 +84,14 @@ class MotorEventos:
                     return True
         return False
 
+    def fuera_de_franja(self) -> bool:
+        """True si AHORA (hora del sistema) esta fuera de las franjas activas."""
+        return not self._en_franja(self._hora_actual())
+
     def _zona_de(self, caja) -> str | None:
         for nombre, zcaja in self.zonas.items():
             if _cajas_solapan(caja, zcaja):
                 return nombre
-        if not self.zonas:
-            return None
         return None
 
     # -- api ---------------------------------------------------------------

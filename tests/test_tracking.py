@@ -19,10 +19,12 @@ def test_misma_persona_no_genera_segundo_entra():
     assert list(r.actualizar({ID_ENTRA})) == []  # sigue dentro
 
 
-def test_misma_persona_no_genera_segundo_entra():
-    r = RastreadorPersonas(timeout_seg=0.2)
-    r.actualizar({ID_ENTRA})
-    assert list(r.actualizar({ID_ENTRA})) == []  # sigue dentro
+def test_no_acumula_ids_de_personas_que_ya_salieron():
+    r = RastreadorPersonas(timeout_seg=0.01)
+    r.actualizar({ID_ENTRA, ID_SALE})
+    time.sleep(0.02)
+    r.actualizar(set())  # ambos salen
+    assert r._por_id == {}
 
 
 def test_persona_sale_por_timeout():

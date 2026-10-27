@@ -1,25 +1,27 @@
 """Clips de video al disparar eventos: mantiene un buffer circular de frames
-y guarda ±5s alrededor como MP4 (reconstruido desde JPEG sin/recursor FFMPEG)."""
+y guarda ~5s previos como MP4 (reconstruido con el codec mp4v de OpenCV)."""
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Callable
 
 import cv2
 import numpy as np
 
 log = logging.getLogger(__name__)
 
+_TIPO_SEGURO = re.compile(r"[^A-Za-z0-9_-]+")
+
 
 class GuardadorClips:
-    """Buffer circular de frames recentes y guardado en disco on demande.
+    """Buffer circular de frames recientes y guardado en disco bajo demanda.
 
-    - `meter(frame)`: cada vez que un frame nuevo llegue del bucle
-    - `guardar(tipo)`: escribe un mp4 con los ultimos ~70 frames
+    - `meter(frame)`: cada frame nuevo del bucle
+    - `guardar(tipo)`: escribe un mp4 con los ultimos frames en segundo plano
     """
 
     def __init__(self, max_frames: int = 70, carpeta: str = "clips",
@@ -27,38 +29,92 @@ class GuardadorClips:
         self._buf: deque[np.ndarray] = deque(maxlen=max_frames)
         self.carpeta = Path(carpeta)
         self.fps_salida = fps_salida
-        self.carpeta.mkdir(exist_ok=True)
+        self.carpeta.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._trabajos: list[threading.Thread] = []
+        self._secuencia = 0
 
-    def meter(self, frame: np.ndarray) -> None:
-        mini = cv2.resize(frame, (640, 480)) if frame.shape[:2] != (480, 640) else frame
+    def meter(self, frame: np.ndarray | None) -> None:
+        if frame is None:
+            return
         with self._lock:
-            self._buf.append(mini.copy())
+            self._buf.append(frame.copy())
 
     def guardar(self, tipo: str) -> Path | None:
         with self._lock:
-            copia: deque[np.ndarray] = self._buf.copy()
-        if not copia:
-            return None
-        destino = self.carpeta / (
-            f"{time.strftime('%Y%m%d_%H%M%S')}_{tipo}.mp4")
+            if not self._buf:
+                return None
+            copia = deque(self._buf, maxlen=self._buf.maxlen)
+            # el contador evita que dos eventos en el mismo segundo se pisen
+            self._secuencia += 1
+            sello = f"{time.strftime('%Y%m%d_%H%M%S')}_{self._secuencia:04d}"
+            nombre = f"{sello}_{_TIPO_SEGURO.sub('_', tipo)}.mp4"
+
+        destino = self.carpeta / nombre
         hilo = threading.Thread(target=self._escribir, args=(copia, destino),
                                 daemon=True)
         hilo.start()
+        self._trabajos = [t for t in self._trabajos if t.is_alive()]
         self._trabajos.append(hilo)
         return destino
 
     def _escribir(self, frames: deque[np.ndarray], destino: Path) -> None:
-        h = frames[0].shape[0]
-        w = frames[0].shape[1]
-        out = cv2.VideoWriter(str(destino),
-                              cv2.VideoWriter_fourcc(*"mp4v"),
+        h, w = frames[0].shape[:2]
+        out = cv2.VideoWriter(str(destino), cv2.VideoWriter_fourcc(*"mp4v"),
                               self.fps_salida, (w, h))
-        for f in frames:
-            out.write(f)
-        out.release()
+        if not out.isOpened():
+            log.error("no se pudo crear el clip %s (codec mp4v no disponible)",
+                      destino.name)
+            return
+        try:
+            for frame in frames:
+                if frame.shape[:2] != (h, w):
+                    frame = cv2.resize(frame, (w, h))
+                out.write(frame)
+        except Exception:
+            log.exception("error escribiendo el clip %s", destino.name)
+        finally:
+            out.release()
         log.info("clip guardado: %s (%d frames)", destino.name, len(frames))
+        self.podar()
+
+    def podar(self, max_ficheros: int = 60) -> int:
+        """Borra los clips mas antiguos si hay mas de `max_ficheros`.
+
+        Devuelve cuantos se borraron. Evita que clips/ crezca sin limite.
+        """
+        try:
+            ficheros = sorted(self.carpeta.glob("*.mp4"),
+                              key=lambda p: p.stat().st_mtime)
+        except OSError:
+            log.exception("no se pudo podar la carpeta de clips")
+            return 0
+        sobrantes = ficheros[: max(0, len(ficheros) - max_ficheros)]
+        borrados = 0
+        for f in sobrantes:
+            try:
+                f.unlink()
+                borrados += 1
+            except OSError:
+                log.exception("no se pudo borrar el clip %s", f.name)
+        return borrados
+
+    def listar(self) -> list[dict]:
+        """Contenido de clips/ mas reciente primero (para la UI)."""
+        def _info(p: Path) -> dict:
+            try:
+                st = p.stat()
+            except OSError:
+                return {}
+            return {"fichero": p.name,
+                    "tamano": st.st_size,
+                    "cuando": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))}
+        if not self.carpeta.exists():
+            return []
+        return [i for i in map(_info, sorted(
+            self.carpeta.glob("*.mp4"),
+            key=lambda p: p.stat().st_mtime, reverse=True)) if i]
 
     def esperar_trabajos(self, limite: float = 5.0) -> None:
         t0 = time.monotonic()

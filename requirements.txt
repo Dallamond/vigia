@@ -6,6 +6,7 @@ numpy>=1.26
 ultralytics>=8.3
 fastapi>=0.110
 uvicorn>=0.29
+PyYAML>=6.0
 
 # PyTorch: instalarlo aparte con el indice CUDA de tu PC (ver README).
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124

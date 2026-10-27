@@ -1,0 +1,35 @@
+# Vigia — configuracion de ejemplo.
+# Copia este fichero a `config.yaml` y ajusta lo que necesites.
+# Si algo esta mal escrito, Vigia avisa en el log y usa el valor por defecto.
+
+# Fichero SQLite de eventos (relativo al directorio desde el que arrancas).
+almacen: vigia.db
+
+# Segundos que una persona debe permanecer para disparar `permanencia`.
+permanencia_seg: 30
+
+# Segundos sin ver una persona para anunciar `persona_salio`.
+timeout_persona_seg: 10
+
+# Segundos sin ver un objeto vigilado para anunciar `objeto_desaparece`.
+timeout_objeto_seg: 10
+
+# Clases COCO cuyo aparecer/desaparecer quieres registrar.
+vigilar_desaparicion:
+  - laptop
+  - backpack
+  - cell phone
+
+# Zonas rectangulares: nombre -> [x1, y1, x2, y2] en pixeles del frame.
+zonas:
+  puerta: [0, 0, 200, 480]
+  mesa: [300, 200, 640, 480]
+
+# Franjas horarias en las que las reglas del motor estan activas (HH:MM).
+# franjas:
+#   - {desde: "22:00", hasta: "08:00"}
+franjas: []
+
+# Extras (fase 5). Desactivados = menos CPU/disco.
+guardar_clips: true
+notificar: true

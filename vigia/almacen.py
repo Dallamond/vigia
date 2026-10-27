@@ -29,7 +29,15 @@ class Almacen:
     def __init__(self, ruta: str | Path = "vigia.db"):
         self.ruta = Path(ruta)
         self._lock = threading.Lock()
+        self._cerrado = False
         self.con = sqlite3.connect(str(self.ruta), check_same_thread=False)
+        # WAL: lecturas (dashboard) y escrituras (bucle) no se bloquean entre si.
+        try:
+            self.con.execute("PRAGMA journal_mode=WAL")
+            # si otra conexion tiene el candado, espera en vez de fallar
+            self.con.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.Error as e:
+            log.warning("no se pudo activar WAL en %s: %s", self.ruta, e)
         self.con.executescript(_ESQUEMA)
         self.con.commit()
         log.info("BD abierta: %s", self.ruta.resolve())
@@ -48,6 +56,11 @@ class Almacen:
     def historial(self, limite: int = 100, tipo: str | None = None,
                   desde: str | None = None) -> list[dict]:
         """Devuelve los últimos eventos, filtrables por tipo y fecha (ISO)."""
+        try:
+            limite = int(limite)
+        except (TypeError, ValueError):
+            limite = 100
+        limite = max(1, min(limite, 500))
         vez = "SELECT id, marca_sistema, marca_pantalla, tipo, id_tracking, detalle "
         q = vez + "FROM eventos WHERE 1=1"
         args: list = []
@@ -70,4 +83,10 @@ class Almacen:
             self.con.commit()
 
     def cerrar(self) -> None:
-        self.con.close()
+        """Cierra la conexion. Se puede llamar mas de una vez sin fallar."""
+        with self._lock:
+            if self._cerrado:
+                return
+            self._cerrado = True
+            self.con.close()
+            log.info("BD cerrada: %s", self.ruta)
