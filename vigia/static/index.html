@@ -456,13 +456,19 @@ function horaDe(e){
 function cuandoDe(e){
   return e.marca_sistema || (e.cuando || '');
 }
+/* fecha local (toISOString usa UTC y de madrugada daba el dia anterior) */
+function hoyLocal(){
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 /* ---------- detalle ---------- */
 function verEvento(e){
   $('dTitulo').textContent = e.tipo + (e.detalle ? ' — ' + e.detalle : '');
   let html = '';
-  if (e.miniatura) html += `<img class="detail-media" src="${media(e.miniatura)}" alt="miniatura">`;
-  if (e.clip) html += `<video class="detail-media" controls preload="metadata" src="${media(e.clip)}"></video>`;
+  if (e.miniatura) html += `<img class="detail-media" src="${media(e.miniatura)}" alt="miniatura" onerror="this.remove()">`;
+  if (e.clip) html += `<video class="detail-media" controls preload="metadata" src="${media(e.clip)}" onerror="this.remove()"></video>`;
   if (!e.miniatura && !e.clip) html += '<p class="empty">Este evento no tiene captura guardada.</p>';
   html += `<dl class="kv">
     <dt>Cuándo</dt><dd>${esc(cuandoDe(e) || '—')}</dd>
@@ -476,7 +482,7 @@ function verEvento(e){
 
 function filaEvento(e){
   const mini = e.miniatura
-    ? `<img class="thumb" src="${media(e.miniatura)}" alt="" loading="lazy">`
+    ? `<img class="thumb" src="${media(e.miniatura)}" alt="" loading="lazy" onerror="this.remove()">`
     : '';
   return `<div class="row" data-ev='${esc(JSON.stringify(e))}'>
     ${mini}
@@ -539,7 +545,7 @@ function colorTipo(t){
   return '#38bdf8';
 }
 async function cargarTimeline(){
-  const dia = $('tdia').value || new Date().toISOString().slice(0, 10);
+  const dia = $('tdia').value || hoyLocal();
   $('tdia').value = dia;
   try{
     const r = await fetch(`/timeline?dia=${encodeURIComponent(dia)}`);
@@ -747,7 +753,11 @@ $('aGuardar').onclick = async () => {
       body: JSON.stringify(cuerpo)
     });
     const res = await r.json();
-    if(res.ok){ toast('Ajustes aplicados'); $('mAjustes').classList.remove('open'); }
+    if(res.ok){
+      toast(res.reinicio ? 'Ajustes guardados: reinicia para aplicar la resolución'
+                         : 'Ajustes aplicados');
+      $('mAjustes').classList.remove('open');
+    }
     else toast(res.error || 'no se pudo guardar', false);
   }catch(e){ toast('error: ' + e.message, false); }
 };

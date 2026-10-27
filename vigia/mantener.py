@@ -31,8 +31,21 @@ def purgar_media(carpeta: str | Path, dias: int = 0,
     if not raiz.exists():
         return {"borrados": 0, "liberado": 0}
 
-    ficheros = [p for p in raiz.iterdir()
-                if p.is_file() and p.suffix.lower() in _EXTENSIONES]
+    # stats una sola vez: si otro hilo borra un fichero entre medias, no peta
+    info: list[tuple[Path, float, int]] = []
+    try:
+        for p in raiz.iterdir():
+            if not p.is_file() or p.suffix.lower() not in _EXTENSIONES:
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            info.append((p, st.st_mtime, st.st_size))
+    except OSError:
+        log.exception("no se pudo leer la carpeta de media %s", raiz)
+        return {"borrados": 0, "liberado": 0}
+
     borrados = 0
     liberado = 0
 
@@ -48,24 +61,16 @@ def purgar_media(carpeta: str | Path, dias: int = 0,
 
     if dias and dias > 0:
         limite = time.time() - dias * 86400
-        for p in list(ficheros):
-            try:
-                if p.stat().st_mtime < limite:
-                    _borrar(p)
-            except OSError:
-                continue
-        ficheros = [p for p in ficheros if p.exists()]
+        for p, mtime, _tam in info:
+            if mtime < limite:
+                _borrar(p)
 
     if max_bytes and max_bytes > 0:
-        restantes = sorted(ficheros, key=lambda p: p.stat().st_mtime)
-        total = sum(p.stat().st_size for p in restantes)
-        for p in restantes:
+        restantes = [(p, mtime, tam) for p, mtime, tam in info if p.exists()]
+        total = sum(tam for _p, _mtime, tam in restantes)
+        for p, _mtime, tam in sorted(restantes, key=lambda x: x[1]):
             if total <= max_bytes:
                 break
-            try:
-                tam = p.stat().st_size
-            except OSError:
-                continue
             _borrar(p)
             total -= tam
 
@@ -93,6 +98,9 @@ def mantener(almacen: Almacen, clips=None, config: dict | None = None) -> dict:
         # los topes duros por numero de ficheros siguen vigentes
         clips.podar()
         clips.podar_miniaturas()
+        # el historial no debe apuntar a miniaturas/clips ya borrados
+        resumen["media_huerfana"] = almacen.limpiar_media_huerfana(
+            clips.carpeta)
     return resumen
 
 

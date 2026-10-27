@@ -371,3 +371,178 @@ def test_anotar_evento_reutiliza_el_id_del_motor(tmp_path):
     assert a.historial()[0]["miniatura"].endswith("_min.jpg")
     a.cerrar()
 
+
+# -- regresiones: media, salud y persistencia de config ------------------
+
+def test_salud_cuenta_miniaturas_y_clips(monkeypatch, cliente, tmp_path):
+    a = Almacen(tmp_path / "s.db")
+    carpeta = tmp_path / "clips"
+    g = web.GuardadorClips(carpeta=str(carpeta))
+    g.guardar_miniatura(np.zeros((8, 8, 3), np.uint8), "persona_entra")
+    (carpeta / "a.mp4").write_bytes(b"\x00" * 100)
+    monkeypatch.setattr(web, "_almacen", a)
+    monkeypatch.setattr(web, "_clips", g)
+
+    datos = cliente.get("/salud").json()
+    total = sum(p.stat().st_size for p in carpeta.iterdir() if p.is_file())
+    assert datos["clips"]["n"] == 1
+    assert datos["clips"]["miniaturas"] == 1
+    assert datos["clips"]["bytes"] == total
+    a.cerrar()
+
+
+def test_salud_sin_clips_devuelve_ceros(monkeypatch, cliente):
+    monkeypatch.setattr(web, "_clips", None)
+    datos = cliente.get("/salud").json()
+    assert datos["clips"] == {"n": 0, "bytes": 0, "miniaturas": 0}
+
+
+def test_persistir_config_conserva_comentarios_y_orden(monkeypatch, tmp_path):
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(
+        "# Vigia - comentario de cabecera\n"
+        "almacen: vigia.db  # no tocar\n"
+        "permanencia_seg: 30\n"
+        "vigilar_desaparicion:\n"
+        "- laptop\n"
+        "- backpack\n"
+        "# franja de prueba\n"
+        "franjas: []\n",
+        encoding="utf-8")
+    monkeypatch.setattr(web, "_RUTA_CONFIG", ruta)
+
+    web._persistir_config({"guardar_clips": False})
+
+    texto = ruta.read_text(encoding="utf-8")
+    assert "# Vigia - comentario de cabecera" in texto
+    assert "# franja de prueba" in texto
+    assert "permanencia_seg: 30" in texto
+    assert "- laptop" in texto and "- backpack" in texto
+    import yaml
+    datos = yaml.safe_load(texto)
+    assert datos["almacen"] == "vigia.db"
+    assert datos["guardar_clips"] is False
+    assert datos["vigilar_desaparicion"] == ["laptop", "backpack"]
+
+
+def test_persistir_config_reemplaza_bloque_de_lista(monkeypatch, tmp_path):
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text("vigilar_desaparicion:\n- laptop\n- backpack\n"
+                    "notificar: true\n", encoding="utf-8")
+    monkeypatch.setattr(web, "_RUTA_CONFIG", ruta)
+
+    web._persistir_config({"vigilar_desaparicion": ["laptop"]})
+
+    import yaml
+    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
+    assert datos["vigilar_desaparicion"] == ["laptop"]
+    assert datos["notificar"] is True
+
+
+def test_persistir_config_zonas_y_franjas_siguen_siendo_yaml(monkeypatch,
+                                                              tmp_path):
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text("permanencia_seg: 30\nzonas: {}\nfranjas: []\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(web, "_RUTA_CONFIG", ruta)
+
+    web._persistir_config({
+        "zonas": {"puerta": [0, 0, 100, 100]},
+        "franjas": [{"desde": "22:00", "hasta": "08:00"}],
+    })
+
+    from vigia.config import cargar_config
+    cfg = cargar_config(ruta)
+    assert cfg["permanencia_seg"] == 30
+    assert cfg["zonas"] == {"puerta": (0, 0, 100, 100)}
+    assert cfg["franjas"] == [{"desde": "22:00", "hasta": "08:00"}]
+
+
+def test_config_guardar_persiste_solo_lo_cambiado(monkeypatch, cliente,
+                                                  tmp_path):
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text("# comentario\npermanencia_seg: 30\nnotificar: true\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(web, "_RUTA_CONFIG", ruta)
+    cfg_antes = dict(web._config)
+    perm_antes = web._motor_compartido.permanencia_seg
+    try:
+        r = cliente.post("/config", json={"permanencia_seg": 45})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        texto = ruta.read_text(encoding="utf-8")
+        assert "# comentario" in texto
+        assert "notificar: true" in texto
+        assert "permanencia_seg: 45" in texto
+        assert web._motor_compartido.permanencia_seg == 45
+    finally:
+        web._motor_compartido.permanencia_seg = perm_antes
+        web._config.clear()
+        web._config.update(cfg_antes)
+
+
+def test_iou_y_persona_de_pose_emparejan_por_caja():
+    assert web._iou((0, 0, 10, 10), (0, 0, 10, 10)) == pytest.approx(1.0)
+    assert web._iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    personas = [(4, (0, 0, 100, 100)), (5, (200, 200, 300, 300))]
+    assert web._persona_de_pose((10, 10, 90, 90), personas) == 4
+    assert web._persona_de_pose((250, 250, 260, 260), personas) == 5
+    assert web._persona_de_pose((500, 500, 510, 510), personas) is None
+
+
+def test_bucle_no_llena_el_buffer_si_los_clips_estan_apagados(tmp_path):
+    a = Almacen(tmp_path / "b.db")
+    estado = Estado()
+    clips = web.GuardadorClips(max_frames=10,
+                               carpeta=str(tmp_path / "clips"))
+    config = {"guardar_clips": False, "notificar": False,
+              "miniaturas": False, "actividades": False, "caras": False,
+              "timeout_persona_seg": 10}
+    parar = threading.Event()
+    hilo = threading.Thread(
+        target=web.bucle_procesamiento, args=(estado,),
+        kwargs={"cam": _CamaraFalsa(), "detector": _DetectorFalso(),
+                "clips": clips, "config": config, "almacen": a,
+                "parar": parar}, daemon=True)
+    hilo.start()
+    try:
+        limite = time.monotonic() + 5
+        while estado.snapshot()[0] is None and time.monotonic() < limite:
+            time.sleep(0.02)
+        time.sleep(0.1)
+    finally:
+        parar.set()
+        hilo.join(2)
+        a.cerrar()
+    assert list(clips._buf) == []
+
+
+def test_bucle_llena_el_buffer_al_activar_clips_en_caliente(tmp_path):
+    a = Almacen(tmp_path / "b2.db")
+    estado = Estado()
+    clips = web.GuardadorClips(max_frames=20,
+                               carpeta=str(tmp_path / "clips"))
+    config = {"guardar_clips": False, "notificar": False,
+              "miniaturas": False, "actividades": False, "caras": False,
+              "timeout_persona_seg": 10}
+    parar = threading.Event()
+    hilo = threading.Thread(
+        target=web.bucle_procesamiento, args=(estado,),
+        kwargs={"cam": _CamaraFalsa(), "detector": _DetectorFalso(),
+                "clips": clips, "config": config, "almacen": a,
+                "parar": parar}, daemon=True)
+    hilo.start()
+    try:
+        limite = time.monotonic() + 5
+        while estado.snapshot()[0] is None and time.monotonic() < limite:
+            time.sleep(0.02)
+        assert list(clips._buf) == []
+        config["guardar_clips"] = True  # interruptor en caliente
+        limite = time.monotonic() + 5
+        while not clips._buf and time.monotonic() < limite:
+            time.sleep(0.02)
+        assert len(clips._buf) > 0
+    finally:
+        parar.set()
+        hilo.join(2)
+        a.cerrar()
+

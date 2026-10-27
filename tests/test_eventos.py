@@ -91,3 +91,84 @@ def test_franja_horaria_bloquea(tmp_path):
     if not m._en_franja(m._hora_actual()):
         assert m.procesar(P(), {}) == []
     a.cerrar()
+
+
+# -- regresiones: id_tracking, gracia de ID y franja ---------------------
+
+def test_permanencia_guarda_el_id_tracking(motor):
+    motor.procesar(P(), {3: (0, 0, 100, 100)})
+    adelantar(31)
+    evs = motor.procesar(P(), {3: (0, 0, 100, 100)})
+    assert len(evs) == 1
+    assert evs[0].tipo == "permanencia" and evs[0].id_tracking == 3
+    fila = motor.almacen.historial()[0]
+    assert fila["id_tracking"] == 3
+
+
+def test_permanencia_sobrevive_a_un_frame_sin_id(motor):
+    motor.procesar([], {3: (0, 0, 100, 100)})
+    adelantar(15)
+    motor.procesar([], {3: (0, 0, 100, 100)})
+    # ByteTrack pierde el ID en un frame: no debe reiniciar la permanencia
+    assert motor.procesar([], {}) == []
+    adelantar(20)
+    evs = motor.procesar([], {3: (0, 0, 100, 100)})
+    assert len(evs) == 1 and evs[0].id_tracking == 3
+
+
+def test_id_perdido_mas_que_la_gracia_reinicia(motor):
+    motor.procesar([], {3: (0, 0, 100, 100)})
+    adelantar(15)
+    motor.procesar([], {3: (0, 0, 100, 100)})
+    # desaparece mas de timeout_persona_seg (10 s por defecto):
+    # al volver debe empezar de cero, no anunciar permanencia
+    adelantar(11)
+    motor.procesar([], {})
+    adelantar(20)
+    assert motor.procesar([], {3: (0, 0, 100, 100)}) == []
+
+
+def _motor_con_franja(tmp_path, hora):
+    a = Almacen(tmp_path / "fz.db")
+    m = MotorEventos(a, config={
+        "permanencia_seg": 30,
+        "vigilar_desaparicion": ["laptop"],
+        "timeout_objeto_seg": 5,
+        "franjas": [{"desde": "01:00", "hasta": "05:00"}],
+    }, reloj=ahora)
+    m._hora_actual = lambda: hora["v"]
+    return a, m
+
+
+def test_fuera_de_franja_no_deja_permanencia_fantasma(tmp_path):
+    hora = {"v": "03:00"}
+    a, m = _motor_con_franja(tmp_path, hora)
+    try:
+        m.procesar(P(), {})
+        adelantar(20)  # dentro de franja, pero aun no llega a 30 s
+        m.procesar(P(), {})
+        hora["v"] = "12:00"  # fuera de franja
+        adelantar(40)
+        assert m.procesar(P(), {}) == []
+        hora["v"] = "03:00"  # reentrada: el reloj interno debe empezar de cero
+        assert m.procesar(P(), {}) == []
+        adelantar(10)
+        assert m.procesar(P(), {}) == []
+    finally:
+        a.cerrar()
+
+
+def test_fuera_de_franja_reinicia_los_objetos(tmp_path):
+    hora = {"v": "03:00"}
+    a, m = _motor_con_franja(tmp_path, hora)
+    try:
+        m.procesar(P(), {}, objetos_extra=L(True))
+        hora["v"] = "12:00"
+        adelantar(10)
+        assert m.procesar(P(), {}, objetos_extra=L(False)) == []
+        hora["v"] = "03:00"
+        adelantar(20)
+        # el portatil ya no estaba antes de reentrar: no hay desaparicion
+        assert m.procesar(P(), {}, objetos_extra=L(False)) == []
+    finally:
+        a.cerrar()

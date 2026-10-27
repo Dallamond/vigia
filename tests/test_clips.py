@@ -81,3 +81,33 @@ def test_podar_miniaturas(tmp_path):
         g.guardar_miniatura(_frame(), "x")
     assert g.podar_miniaturas(max_ficheros=2) == 3
     assert len(list((tmp_path / "clips").glob("*.jpg"))) == 2
+
+
+def test_resumen_media_cuenta_clips_y_miniaturas(tmp_path):
+    g = GuardadorClips(max_frames=2, carpeta=str(tmp_path / "clips"))
+    g.meter(_frame())
+    clip = g.guardar("persona_entra")
+    mini = g.guardar_miniatura(_frame(), "persona_entra")
+    g.esperar_trabajos(10)
+    (g.carpeta / "notas.txt").write_bytes(b"no es media")
+
+    res = g.resumen_media()
+    assert res["n"] == 1
+    assert res["miniaturas"] == 1
+    assert res["bytes"] == clip.stat().st_size + mini.stat().st_size
+
+
+def test_resumen_media_carpeta_inexistente(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "no-existe"))
+    import shutil
+    shutil.rmtree(g.carpeta)
+    assert g.resumen_media() == {"n": 0, "miniaturas": 0, "bytes": 0}
+
+
+def test_fps_salida_se_puede_ajustar(tmp_path):
+    g = GuardadorClips(max_frames=2, carpeta=str(tmp_path / "clips"))
+    g.fps_salida = 12.5
+    g.meter(_frame())
+    destino = g.guardar("x")
+    g.esperar_trabajos(10)
+    assert destino.exists()

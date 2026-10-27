@@ -160,6 +160,30 @@ class GuardadorClips:
             self.carpeta.glob("*.mp4"),
             key=lambda p: p.stat().st_mtime, reverse=True)) if i]
 
+    def resumen_media(self) -> dict:
+        """Cuenta y tamano de toda la media (clips + miniaturas)."""
+        clips = miniaturas = 0
+        total = 0
+        if self.carpeta.exists():
+            try:
+                for p in self.carpeta.iterdir():
+                    if not p.is_file():
+                        continue
+                    sufijo = p.suffix.lower()
+                    if sufijo not in {".mp4", ".jpg", ".jpeg", ".png"}:
+                        continue
+                    try:
+                        total += p.stat().st_size
+                    except OSError:
+                        continue
+                    if sufijo == ".mp4":
+                        clips += 1
+                    else:
+                        miniaturas += 1
+            except OSError:
+                log.exception("no se pudo resumir la media")
+        return {"n": clips, "miniaturas": miniaturas, "bytes": total}
+
     def esperar_trabajos(self, limite: float = 5.0) -> None:
         t0 = time.monotonic()
         for t in self._trabajos:

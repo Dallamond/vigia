@@ -36,6 +36,8 @@ DEFAULTS = {
     # actividades requiere el modelo de pose (descarga extra en primer uso):
     # off por defecto para tests y arranque ligero; se activa en config.yaml
     "actividades": False,
+    # reconocimiento de caras (fase 7): descarga modelos ONNX la primera vez
+    "caras": False,
 }
 
 _LIMITES = {
@@ -72,6 +74,20 @@ def _entero(valor, defecto: int, clave: str, minimo: int, maximo: int) -> int:
     except (TypeError, ValueError):
         numero = defecto
     return max(minimo, min(numero, maximo))
+
+
+def _numero_positivo(valor, defecto, clave: str, maximo: float) -> float:
+    """Numero > 0; un valor <= 0 o invalido cae al defecto con aviso."""
+    numero = _numero(valor, defecto, clave)
+    try:
+        numero = float(numero)
+    except (TypeError, ValueError):
+        numero = defecto
+    if numero <= 0:
+        log.warning("config: %s debe ser mayor que 0 (%r); se usa %r",
+                    clave, valor, defecto)
+        return float(defecto)
+    return min(numero, maximo)
 
 
 def _booleano(valor, defecto, clave: str):
@@ -151,6 +167,10 @@ def cargar_config(ruta: str | Path = "config.yaml") -> dict:
     for k, v in usuario.items():
         if v is not None:
             cfg[k] = v
+    for k in usuario:
+        if k not in DEFAULTS:
+            log.warning("config: clave desconocida %r (se ignora; revisa "
+                        "el nombre)", k)
 
     if not isinstance(cfg["almacen"], str) or not cfg["almacen"].strip():
         log.warning("config: almacen invalido (%r); se usa %r",
@@ -159,7 +179,8 @@ def cargar_config(ruta: str | Path = "config.yaml") -> dict:
 
     for clave in ("permanencia_seg", "timeout_objeto_seg",
                   "timeout_persona_seg"):
-        cfg[clave] = _numero(cfg[clave], DEFAULTS[clave], clave)
+        cfg[clave] = _numero_positivo(cfg[clave], DEFAULTS[clave], clave,
+                                      86400.0)
 
     cfg["vigilar_desaparicion"] = _lista_texto(
         cfg["vigilar_desaparicion"], "vigilar_desaparicion")
@@ -178,4 +199,6 @@ def cargar_config(ruta: str | Path = "config.yaml") -> dict:
     cfg["actividades"] = _booleano(
         cfg["actividades"], DEFAULTS.get("actividades", False),
         "actividades")
+    cfg["caras"] = _booleano(
+        cfg["caras"], DEFAULTS.get("caras", False), "caras")
     return cfg

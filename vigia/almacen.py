@@ -105,6 +105,35 @@ class Almacen:
                 (miniatura, clip, evento_id))
             self.con.commit()
 
+    def limpiar_media_huerfana(self, carpeta: str | Path) -> int:
+        """Quita de la BD referencias a ficheros que ya no existen en disco.
+
+        La purga borra media por edad/tamano; sin esto, el historial seguiria
+        apuntando a miniaturas y clips borrados (imagenes rotas).
+        """
+        raiz = Path(carpeta)
+        with self._lock:
+            filas = self.con.execute(
+                "SELECT id, miniatura, clip FROM eventos "
+                "WHERE miniatura IS NOT NULL OR clip IS NOT NULL"
+            ).fetchall()
+            cambios = []
+            for evento_id, miniatura, clip in filas:
+                mini_ok = not miniatura or (raiz / miniatura).is_file()
+                clip_ok = not clip or (raiz / clip).is_file()
+                if not mini_ok or not clip_ok:
+                    cambios.append((None if not mini_ok else miniatura,
+                                    None if not clip_ok else clip,
+                                    evento_id))
+            if cambios:
+                self.con.executemany(
+                    "UPDATE eventos SET miniatura = ?, clip = ? WHERE id = ?",
+                    cambios)
+                self.con.commit()
+        if cambios:
+            log.info("BD: %d eventos sin media en disco", len(cambios))
+        return len(cambios)
+
     # -- lectura ----------------------------------------------------------
     def historial(self, limite: int = 100, tipo: str | None = None,
                   desde: str | None = None) -> list[dict]:

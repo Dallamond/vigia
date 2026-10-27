@@ -101,3 +101,47 @@ def test_resolucion_valida_se_respeta(tmp_path):
     p.write_text("ancho: 1280\nalto: 720\n", encoding="utf-8")
     cfg = cargar_config(p)
     assert cfg["ancho"] == 1280 and cfg["alto"] == 720
+
+
+# -- regresiones: tiempos no positivos y claves desconocidas -------------
+
+def test_tiempos_no_positivos_caen_al_default(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        permanencia_seg: -5
+        timeout_objeto_seg: 0
+        timeout_persona_seg: -0.1
+    """), encoding="utf-8")
+    cfg = cargar_config(p)
+    assert cfg["permanencia_seg"] == DEFAULTS["permanencia_seg"]
+    assert cfg["timeout_objeto_seg"] == DEFAULTS["timeout_objeto_seg"]
+    assert cfg["timeout_persona_seg"] == DEFAULTS["timeout_persona_seg"]
+
+
+def test_tiempos_demasiado_grandes_se_acotan(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("permanencia_seg: 999999\ntimeout_objeto_seg: 90000\n",
+                 encoding="utf-8")
+    cfg = cargar_config(p)
+    assert cfg["permanencia_seg"] == 86400
+    assert cfg["timeout_objeto_seg"] == 86400
+
+
+def test_clave_desconocida_avisa_pero_no_rompe(tmp_path, caplog):
+    p = tmp_path / "c.yaml"
+    p.write_text("permanencia_seg: 12\npermanencia_segs: 99\n",
+                 encoding="utf-8")
+    with caplog.at_level("WARNING", logger="vigia.config"):
+        cfg = cargar_config(p)
+    assert cfg["permanencia_seg"] == 12
+    assert "permanencia_segs" in caplog.text
+
+
+def test_caras_es_booleano_y_por_defecto_false(tmp_path):
+    cfg = cargar_config(tmp_path / "no.yaml")
+    assert cfg["caras"] is False
+    p = tmp_path / "c.yaml"
+    p.write_text("caras: true\n", encoding="utf-8")
+    assert cargar_config(p)["caras"] is True
+    p.write_text("caras: \"si\"\n", encoding="utf-8")
+    assert cargar_config(p)["caras"] is False  # no booleano: default

@@ -30,6 +30,7 @@ class Evento:
     tipo: str
     detalle: str | None = None
     id: int | None = None  # id en SQLite, para enlazarle miniatura/clip
+    id_tracking: int | None = None  # persona implicada (permanencia)
 
 
 def _cajas_solapan(caja_a, caja_b) -> bool:
@@ -39,12 +40,13 @@ def _cajas_solapan(caja_a, caja_b) -> bool:
 
 
 class _PermanenciaEstado:
-    __slots__ = ("desde", "zona", "anunciada")
+    __slots__ = ("desde", "zona", "anunciada", "ultima_vez")
 
     def __init__(self, t):
         self.desde = t
         self.zona: str | None = None
         self.anunciada = False
+        self.ultima_vez = t
 
 
 class MotorEventos:
@@ -56,6 +58,9 @@ class MotorEventos:
         self.permanencia_seg = float(cfg.get("permanencia_seg", 30))
         self.vigilar: list[str] = list(cfg.get("vigilar_desaparicion", []))
         self.timeout_objeto_seg = float(cfg.get("timeout_objeto_seg", 10))
+        # gracia para no resetear la permanencia si ByteTrack pierde el ID
+        # durante un frame suelto (mismo margen que persona_salio)
+        self.timeout_persona_seg = float(cfg.get("timeout_persona_seg", 10))
         self.zonas: dict[str, tuple[int, int, int, int]] = {
             k: tuple(v) for k, v in (cfg.get("zonas") or {}).items()}
         self.franjas: list[tuple[str, str]] = [
@@ -95,6 +100,12 @@ class MotorEventos:
                 return nombre
         return None
 
+    def _reiniciar_estado(self) -> None:
+        """Olvida presencias y objetos: se llama al estar fuera de franja."""
+        self._ids.clear()
+        self._objetos_vistos.clear()
+        self._objeto_ausente.clear()
+
     # -- api ---------------------------------------------------------------
     def procesar(self, dets: Iterable[Deteccion],
                  ids_persona: dict[int, tuple] | None = None,
@@ -108,6 +119,9 @@ class MotorEventos:
         """
         hora = self._hora_actual()
         if not self._en_franja(hora):
+            # fuera de franja no se acumula estado: si no, al reentrar
+            # saltarian permanencias/desapariciones con tiempo de fuera
+            self._reiniciar_estado()
             return []
         eventos: list[Evento] = []
         ahora = self.reloj()
@@ -127,6 +141,7 @@ class MotorEventos:
                 st.zona = self._zona_de(caja)
                 self._ids[pid] = st
                 continue
+            st.ultima_vez = ahora
             zona = self._zona_de(caja)
             if zona != st.zona:
                 st.zona = zona
@@ -136,14 +151,16 @@ class MotorEventos:
             telon = ahora - st.desde
             if telon >= self.permanencia_seg and not st.anunciada:
                 detalle = f"permanencia zona={zona}" if zona else "permanencia"
-                ev = Evento("permanencia", detalle)
+                ev = Evento("permanencia", detalle, id_tracking=pid)
                 eventos.append(ev)
                 st.anunciada = True
 
-        # ids que ya no estan: limpiar estado para permitir futuros Avisos
+        # ids que ya no estan: se borran solo tras el margen de gracia, para
+        # que un frame sin ID (ByteTrack) no reinicie la permanencia
         presentes = set(ids_persona)
-        for pid in list(self._ids):
-            if pid not in presentes:
+        for pid, st in list(self._ids.items()):
+            if (pid not in presentes
+                    and ahora - st.ultima_vez > self.timeout_persona_seg):
                 del self._ids[pid]
 
         # aparicion/desaparicion de objetos
@@ -174,7 +191,8 @@ class MotorEventos:
         # persistir (devuelve el id para poder enlazar miniatura/video)
         guardados: list[Evento] = []
         for ev in eventos:
-            ev_id = self.almacen.guardar(ev.tipo, id_tracking=None,
+            ev_id = self.almacen.guardar(ev.tipo,
+                                         id_tracking=ev.id_tracking,
                                          detalle=ev.detalle)
             guardados.append(replace(ev, id=ev_id))
             log.info("evento %s (%s) id=%s", ev.tipo, ev.detalle, ev_id)

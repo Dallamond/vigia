@@ -12,6 +12,7 @@ Arranque: .venv\\Scripts\\python.exe -m vigia.web   →  http://localhost:8000
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import threading
 import time
@@ -121,6 +122,43 @@ def _jpeg(frame) -> bytes:
     return buf.tobytes() if ok else b""
 
 
+def _iou(caja_a, caja_b) -> float:
+    ax1, ay1, ax2, ay2 = caja_a
+    bx1, by1, bx2, by2 = caja_b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _persona_de_pose(caja, personas) -> int | None:
+    """Empareja la caja de una pose con la persona trackeada (mismo ID visual).
+
+    El modelo de pose usa su propio ByteTrack: sin este emparejamiento el #N
+    de /actividades no seria el mismo #N que se dibuja en el video.
+    """
+    mejor, mejor_iou = None, 0.0
+    for pid, caja_p in personas:
+        iou = _iou(caja, caja_p)
+        if iou > mejor_iou:
+            mejor, mejor_iou = pid, iou
+    if mejor is not None and mejor_iou >= 0.2:
+        return mejor
+    # respaldo: centro de la pose dentro de la caja de la persona
+    cx = (caja[0] + caja[2]) / 2
+    cy = (caja[1] + caja[3]) / 2
+    for pid, caja_p in personas:
+        if (caja_p[0] - 10 <= cx <= caja_p[2] + 10
+                and caja_p[1] - 10 <= cy <= caja_p[3] + 10):
+            return pid
+    return None
+
+
 def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
                    frame, tipo: str, detalle: str | None = "",
                    id_tracking: int | None = None,
@@ -194,22 +232,31 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
             timeout_seg=float(config.get("timeout_persona_seg", 10)))
     # caras (identidad): carga diferida; desactivacion permanente si falla
     caras_det: CarasDetector | None = None
-    caras_on = config.get("caras", False)
+    caras_fallo = False
     identidades: dict[int, tuple[str, float]] = {}
     pendiente: dict = {"emb": None, "cuando": 0.0, "imagen": None}
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
+    ultimo_t = 0.0
     # la primera pasada de mantenimiento, tras el arranque
     proximo_mantenimiento = time.monotonic() + 60 * int(
         config.get("mantener_cada_min", 60) or 60)
     # carga diferida del modelo de pose (segunda descarga en el primer arranque:
     # si falla, seguimos sin pose y avisamos en el log una sola vez)
     pose_det: PoseDetector | None = None
-    pose_exploro = config.get("actividades", True)
+    pose_fallo = False
     actividades: dict[int, EstabilizadorAct] = {}
+    ultima_actividad: dict[int, float] = {}
 
     while not (parar and parar.is_set()):
         t0 = time.perf_counter()
+        # FPS real del bucle completo (incluye dibujo, JPEG y espera)
+        if ultimo_t:
+            delta = t0 - ultimo_t
+            if delta > 0:
+                fps_hist.append(1.0 / delta)
+                fps_ultimo = sum(fps_hist) / len(fps_hist)
+        ultimo_t = t0
         try:
             ok, frame = cam.leer()
             if not ok:
@@ -221,9 +268,13 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 espera = _ESPERA_CAIDA
             else:
                 dets, ids_idx = detector.detectar_track(frame)
+                # el buffer guarda el frame ANTES de anotar el evento: asi el
+                # clip incluye el instante que lo dispara
+                if clips is not None and config.get("guardar_clips", True):
+                    clips.fps_salida = min(max(fps_ultimo or 10.0, 1.0), 30.0)
+                    clips.meter(frame)
                 ids_persona = {ids_idx[i] for i, d in enumerate(dets)
                                if d.es_persona and i in ids_idx}
-                ids_dentro = rastreador.ids_dentro()
                 for tipo, pid in rastreador.actualizar(ids_persona):
                     # coherencia: entra/sale tambien respeta las franjas
                     if motor.fuera_de_franja():
@@ -238,33 +289,53 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                                    ev.tipo, ev.detalle, evento_id=ev.id)
 
                 # actividades: segunda pasada de pose + clasificacion por persona
-                if pose_exploro and pose_det is None:
+                # (se lee la config en cada frame: el interruptor del panel
+                # funciona sin reiniciar)
+                act_on = bool(config.get("actividades", False))
+                if not act_on:
+                    pose_fallo = False  # permitir reintento si se reactiva
+                    if actividades:
+                        actividades.clear()
+                        ultima_actividad.clear()
+                        with _act_lock:
+                            _actividades_personas.clear()
+                if act_on and pose_det is None and not pose_fallo:
                     try:
                         pose_det = PoseDetector()
                     except Exception:
-                        pose_exploro = False  # no insistir (p.ej. sin red)
+                        pose_fallo = True  # no insistir (p.ej. sin red)
                         log.warning("modelo de pose no disponible; "
-                                    "desactivando actividades")
-                if pose_det is not None:
+                                    "actividades desactivadas")
+                if act_on and pose_det is not None:
                     try:
                         poses = pose_det.detectar(frame)
+                        personas = [(pid, caja) for pid, caja in mapa_ids.items()]
+                        ahora_act = time.time()
                         vistos = set()
                         for p in poses:
+                            pid = _persona_de_pose(p.caja, personas)
+                            if pid is None:
+                                continue
                             act = clasificar_actividad(p, extras)
-                            est = actividades.get(p.track_id)
+                            est = actividades.get(pid)
                             if est is None:
                                 est = EstabilizadorAct()
-                                actividades[p.track_id] = est
-                            anuncio = est.tick(act, time.time())
-                            if anuncio:
+                                actividades[pid] = est
+                            ultima_actividad[pid] = ahora_act
+                            anuncio = est.tick(act, ahora_act)
+                            if anuncio and not motor.fuera_de_franja():
                                 _anotar_evento(
                                     estado, almacen, clips, config, frame,
-                                    "actividad", f"id {p.track_id} {anuncio}",
-                                    id_tracking=p.track_id)
-                            vistos.add(p.track_id)
+                                    "actividad", f"id {pid} {anuncio}",
+                                    id_tracking=pid)
+                            vistos.add(pid)
+                        # gracia de 5 s: un frame sin pose no borra la actividad
                         for pid in list(actividades):
-                            if pid not in vistos:
+                            if pid not in vistos and (
+                                    ahora_act - ultima_actividad.get(pid, 0)
+                                    > 5.0):
                                 del actividades[pid]
+                                ultima_actividad.pop(pid, None)
                         dibujar_pose(frame, poses)
                         # publicar para /actividades (con cerrojo: lo lee la web)
                         with _act_lock:
@@ -275,7 +346,10 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                         log.exception("error en pose/actividades (se sigue)")
 
                 # caras: identidad por persona (YuNet + SFace, local)
-                if caras_on and caras_det is None:
+                caras_on = bool(config.get("caras", False))
+                if not caras_on:
+                    caras_fallo = False
+                if caras_on and caras_det is None and not caras_fallo:
                     try:
                         caras_det = CarasDetector()
                         caras_det.set_conocidos({
@@ -284,7 +358,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                             for r in almacen.rostros()})
                         caras_det.recargar = False
                     except Exception:
-                        caras_on = False
+                        caras_fallo = True
                         log.warning("caras desactivadas: modelos no disponibles")
                 if caras_on and caras_det is not None:
                     try:
@@ -327,17 +401,12 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                     except Exception:
                         log.exception("error en caras (se sigue)")
 
-                dt = time.perf_counter() - t0
-                fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-                fps_ultimo = sum(fps_hist) / len(fps_hist)
                 ids_dentro = rastreador.ids_dentro()
                 # leer las zonas del motor en cada frame: el editor las cambia
                 # en caliente y no deben quedarse congeladas hasta reiniciar
                 dibujar(frame, dets, fps_ultimo, pie=None,
                         ids_por_indice=ids_idx, ids_persona=ids_dentro,
                         zonas=motor.zonas)
-                if clips:
-                    clips.meter(frame)
                 estado.actualizar(_jpeg(frame), fps_ultimo, dets,
                                   ids_dentro, True)
 
@@ -368,8 +437,10 @@ app = FastAPI(title="Vigia")
 estado = Estado()
 _config = cargar_config()
 _almacen = Almacen(_config.get("almacen", "vigia.db"))
-_clips = (GuardadorClips(fps_salida=10.0)
-          if _config.get("guardar_clips", True) else None)
+# se crea siempre: el buffer solo se llena con guardar_clips=true, pero los
+# endpoints /clips y /media siguen sirviendo lo que ya hay en disco y el
+# interruptor del panel funciona en caliente
+_clips = GuardadorClips(fps_salida=10.0)
 # compartidos para poder aplicar los ajustes del dashboard en caliente
 _motor_compartido = MotorEventos(_almacen, config=_config)
 _rastreador_compartido = RastreadorPersonas(
@@ -499,7 +570,8 @@ def timeline_json(response: Response, dia: str | None = None,
 @app.get("/salud")
 def salud_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
-    clips = _clips.listar() if _clips is not None else []
+    resumen = (_clips.resumen_media() if _clips is not None
+               else {"n": 0, "bytes": 0, "miniaturas": 0})
     raiz = _clips.carpeta if _clips is not None else Path(".")
     try:
         uso = shutil.disk_usage(str(raiz))
@@ -522,8 +594,9 @@ def salud_json(response: Response) -> dict:
         "eventos": eventos,
         "ultimo_evento": ultimo,
         "db_bytes": db_bytes,
-        "clips": {"n": len(clips),
-                  "bytes": sum(int(c.get("tamano", 0)) for c in clips)},
+        "clips": {"n": resumen.get("n", 0),
+                  "bytes": resumen.get("bytes", 0),
+                  "miniaturas": resumen.get("miniaturas", 0)},
         "disco_libre_gb": round(libre_gb, 1),
         "disco_total_gb": round(total_gb, 1),
     }
@@ -658,6 +731,50 @@ def config_json(response: Response) -> dict:
     return c
 
 
+def _linea_yaml(clave: str, valor) -> str:
+    """Linea(s) YAML para una clave (sin romper comentarios del resto).
+
+    Estilo bloque: un escalar ocupa una linea y una lista/mapa varias, para
+    que el fichero siga siendo YAML valido al mezclarse con el resto.
+    """
+    import yaml
+    texto = yaml.safe_dump({clave: valor}, allow_unicode=True,
+                           default_flow_style=False, sort_keys=False,
+                           indent=2).strip()
+    return texto
+
+
+def _persistir_config(cambios: dict) -> None:
+    """Actualiza solo las claves cambiadas, conservando comentarios y orden."""
+    ruta = Path(_RUTA_CONFIG)
+    try:
+        texto = ruta.read_text(encoding="utf-8")
+    except OSError:
+        texto = ("# Vigia - configuracion activa (editada desde el panel)\n"
+                 "# Referencia completa y comentada: config.example.yaml\n")
+    lineas = texto.splitlines()
+    for clave, valor in cambios.items():
+        nuevas = _linea_yaml(clave, valor).splitlines()
+        patron = re.compile(rf"^{re.escape(clave)}\s*:")
+        indice = next((i for i, linea in enumerate(lineas)
+                       if patron.match(linea)), None)
+        if indice is None:
+            lineas.extend(nuevas)
+            continue
+        # el bloque de la clave llega hasta la siguiente linea no indentada
+        fin = indice + 1
+        while fin < len(lineas):
+            linea = lineas[fin]
+            if not linea.strip():
+                break
+            if linea[0] in " \t-":
+                fin += 1
+                continue
+            break
+        lineas[indice:fin] = nuevas
+    ruta.write_text("\n".join(lineas).rstrip("\n") + "\n", encoding="utf-8")
+
+
 @app.post("/config")
 async def config_guardar(datos: dict) -> dict:
     """Aplica ajustes al sistema en caliente y los guarda en config.yaml."""
@@ -717,14 +834,16 @@ async def config_guardar(datos: dict) -> dict:
             (f["desde"], f["hasta"]) for f in datos["franjas"]]
     if "timeout_persona_seg" in datos:
         _rastreador_compartido.timeout_seg = float(datos["timeout_persona_seg"])
+        # el motor tambien usa el margen para no resetear la permanencia
+        _motor_compartido.timeout_persona_seg = float(
+            datos["timeout_persona_seg"])
 
     # persistir en config.yaml (el dict _config lo lee el bucle en vivo)
-    import yaml
-    _config.update({k: v for k, v in datos.items()
-                    if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA})
+    cambios = {k: v for k, v in datos.items()
+               if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA}
+    _config.update(cambios)
     try:
-        with open(_RUTA_CONFIG, "w", encoding="utf-8") as f:
-            yaml.safe_dump(_config, f, allow_unicode=True, sort_keys=False)
+        _persistir_config(cambios)
     except OSError:
         log.exception("no se pudo guardar config.yaml (ajustes en memoria igual)")
         return {"ok": False, "guardado": False}
