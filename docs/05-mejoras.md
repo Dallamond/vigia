@@ -13,6 +13,8 @@
 >   - "[[02-roadmap]]"
 >   - "[[04-estado]]"
 
+> Siguiente ronda de trabajo (priorizada): ver [[06-plan-v2]].
+
 ## Diagnóstico
 
 Vigia ya detecta, rastrea, clasifica actividades y guarda eventos. Lo que le

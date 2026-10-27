@@ -16,6 +16,8 @@ Ver `docs/04-estado.md` — fuente de verdad del estado del proyecto.
 | `docs/02-roadmap.md` | Fases 1–5 y criterios de cierre |
 | `docs/03-plan-fase-1.md` | Plan detallado de la fase en curso |
 | `docs/04-estado.md` | Estado vivo del proyecto + registro de cambios |
+| `docs/05-mejoras.md` | Mejoras por sprints |
+| `docs/06-plan-v2.md` | Plan v2 priorizado: Telegram, cámaras IP, servidor, GUI, GPUs |
 
 ## Arranque
 

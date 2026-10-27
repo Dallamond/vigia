@@ -1,7 +1,7 @@
 # Vigia — Estado del Proyecto
 
 > fecha_actualizacion: 2026-10-27
-> estado_general: documentacion_creada · listo_para_fase_1
+> estado_general: fases_1-8_hechas · plan_v2_apuntado
 > area: proyecto
 > agente: Alfred (día a día), Atlas (estructura)
 > tags:
@@ -47,6 +47,7 @@
 | 2026-10-27 | Auditoría paralela integrada (logs rotativos `logs.py`, mantenimiento automático `mantener.py` con retención de BD/clips, UI en `vigia/static/index.html`, endpoints /timeline /salud /zonas /media). Fix en `actividades.py` (atributo `anunciada` explícito). Suite 102/102 en ese punto. |
 | 2026-10-27 | FASE 7 CARAS: `caras.py` (YuNet detección + SFace embeddings, 100% local, onnx auto-descargados ~40MB a `modelos/`), tabla `rostros` en SQLite, bucle integra identidad asociando cara↔persona por caja (nombre en pantalla + evento `persona_reconocida`; desconocidos → `cara_desconocida` con cooldown 120 s). API del registro: GET/POST/DELETE `/caras/registro` con recarga en caliente (sin reiniciar). `caras` en ajustes bool + config.yaml. Suite 105/105. Servidor verificado en :8000 (~9 FPS con pose+caras). |
 | 2026-10-27 | Auditoría y cierre: los clips pasan de `mp4v` (no reproducible en navegador) a WebM VP8, con buffer comprimido, escritura atómica y `--convertir` para los antiguos. Línea del tiempo horizontal a ancho completo, en directo; `/timeline?desde&hasta`. Caras: modelos en segundo plano, análisis cada 3 frames, `persona_reconocida` (antes solo documentada) y registro desde el panel con validación. Selector de webcam en caliente (`/camaras`). Rutas ancladas a la raíz, `config.yaml` fuera de git, config atómica, bucle partido en `analisis.py`. Suite 177/177. |
+| 2026-10-27 | Plan v2 apuntado en `docs/06-plan-v2.md`: reorganización de la GUI, caras, permanencia, priorización, personas y acciones mejoradas, Telegram, cámaras IP Wi-Fi, servidor local e investigación de GPUs. Servidor lanzado en :8000 con la versión nueva. |
 
 ## Datos técnicos acumulados
 
@@ -65,8 +66,11 @@ aporte al futuro módulo de escalada)
 
 ## Próxima acción concreta
 
-Ejecutar **Paso 0** del plan de Fase 1: crear estructura + entorno
-virtual + instalar dependencias (ver `03-plan-fase-1.md`).
+Fases 1-8 cerradas (177 tests). Siguiente: **plan v2** en `06-plan-v2.md`.
+Orden: 1) seguridad/token, 2) Telegram, 3) reorganización de la GUI,
+4) permanencia y reglas por zona, 5) cámaras IP RTSP, 6) servidor local,
+7-9) mejora de personas/acciones/caras, 10) investigación de GPUs (en paralelo).
+Antes de empezar hay decisiones abiertas al final de ese documento.
 
 ## Cómo se actualiza este archivo
 
