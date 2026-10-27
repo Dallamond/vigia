@@ -29,6 +29,37 @@ class _FakeCapture:
         self.abierta = False
 
 
+class _Simulador:
+    """Webcam que se puede desenchufar y volver a enchufar desde el test."""
+
+    def __init__(self):
+        self.disponible = True
+        self.creadas = 0
+
+    def __call__(self, fuente, backend=None):
+        self.creadas += 1
+        return _CapSimulada(self)
+
+
+class _CapSimulada:
+    def __init__(self, sim):
+        self.sim = sim
+
+    def isOpened(self):
+        return self.sim.disponible
+
+    def read(self):
+        if not self.sim.disponible:
+            return False, None
+        return True, np.zeros((240, 320, 3), dtype=np.uint8)
+
+    def set(self, *_a):
+        return True
+
+    def release(self):
+        pass
+
+
 @pytest.fixture
 def fake_cv(monkeypatch):
     fake = type("FakeCV", (), {"VideoCapture": staticmethod(_FakeCapture),
@@ -39,6 +70,21 @@ def fake_cv(monkeypatch):
                                "VideoWriter_fourcc": staticmethod(lambda *a: 0)})
     monkeypatch.setattr("vigia.captura.cv2", fake)
     return fake
+
+
+@pytest.fixture
+def sim_cv(monkeypatch):
+    """cv2 falso con una camara que podemos caer y recuperar."""
+    sim = _Simulador()
+    fake = type("FakeCV", (), {"VideoCapture": staticmethod(sim),
+                               "CAP_PROP_FOURCC": 6,
+                               "CAP_PROP_FRAME_WIDTH": 3,
+                               "CAP_PROP_FRAME_HEIGHT": 4,
+                               "VideoWriter_fourcc": staticmethod(lambda *a: 0)})
+    monkeypatch.setattr("vigia.captura.cv2", fake)
+    # sin esperas reales: los tests deben ser instantaneos
+    monkeypatch.setattr("vigia.captura.time.sleep", lambda *_: None)
+    return sim
 
 
 def test_camara_se_abre_con_indice(fake_cv):
@@ -61,9 +107,9 @@ def test_leer_devuelve_none_al_acabarse(fake_cv):
     assert ok is False and frame is None
 
 
-def test_camara_no_disponible_sin_crash(fake_cv):
-    cam = Camara(abrir=True)
-    cam.liberar()
+def test_camara_no_disponible_sin_crash(sim_cv):
+    sim_cv.disponible = False
+    cam = Camara(abrir=False, reintento_segundos=0)
     ok, frame = cam.leer()
     assert ok is False and frame is None
 
@@ -72,3 +118,35 @@ def test_liberar(fake_cv):
     cam = Camara(abrir=True)
     cam.liberar()
     assert not cam.abierta
+
+
+def test_se_reconecta_sola_tras_caida(sim_cv):
+    cam = Camara(abrir=True, reintento_segundos=0)
+    assert cam.abierta
+
+    sim_cv.disponible = False  # se desenchufa
+    assert cam.leer() == (False, None)
+    assert not cam.abierta
+
+    intentos_previos = sim_cv.creadas
+    assert cam.leer() == (False, None)  # debe volver a intentar abrir
+    assert sim_cv.creadas > intentos_previos, "no reintento abrir la camara"
+
+    sim_cv.disponible = True  # se vuelve a enchufar
+    ok, frame = cam.leer()
+    assert ok and frame is not None
+    assert cam.abierta
+
+
+def test_no_deja_captura_colgada_al_fallar_apertura(sim_cv):
+    sim_cv.disponible = False
+    cam = Camara(abrir=False, reintento_segundos=0)
+    assert cam.abrir() is False
+    assert cam.cap is None
+    assert cam.abierta is False
+
+
+def test_abrir_bloqueante_admite_timeout(sim_cv):
+    sim_cv.disponible = False
+    cam = Camara(abrir=False, reintento_segundos=0)
+    assert cam.abrir_bloqueante(timeout=0.05) is False

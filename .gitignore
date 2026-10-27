@@ -4,4 +4,7 @@ __pycache__/
 runs/
 *.pt
 .pytest_cache/
+.ruff_cache/
 docs/superpowers/
+*.db
+*.log

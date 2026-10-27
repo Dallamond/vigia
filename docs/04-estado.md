@@ -23,11 +23,11 @@
 
 | Fase | Estado | Notas |
 |---|---|---|
-| 1 — Base (captura + YOLO en vivo) | en_proceso | cámara OK con frontend web, a falta de medir FPS estables |
-| 2 — Tracking de personas | no_empezada | — |
-| 3 — Motor de eventos | no_empezada | — |
-| 4 — Dashboard web | no_empezada | — |
-| 5 — Extras + futura base de escalada | no_empezada | — |
+| 1 — Base (captura + YOLO en vivo) | hecha | 16 FPS, GPU 60fps, CAP_DSHOW+MJPG |
+| 2 — Tracking de personas | hecha | ByteTrack + eventos entra/sale + presencia |
+| 3 — Motor de eventos | hecha | permanencia, zonas, franjas, objetos → SQLite |
+| 4 — Dashboard web | hecha | /historial filtros, /eventos, zonas dibujadas |
+| 5 — Extras + futura base de escalada | hecha (escalada no) | clips ±5s MP4 + toast Windows |
 
 ## Registro de cambios
 
@@ -36,6 +36,8 @@
 | 2026-10-27 | Proyecto creado. Diseño aprobado por Lucas. Docs: diseño, roadmap, plan fase 1, estado. |
 | 2026-10-27 | Fase 1 en proceso: entorno venv Python 3.12 + torch 2.6.0+cu124 (RTX 3060, cuda OK). Código: captura/detector/main/web (+probar_camara). 9/9 tests pasan. Dashboard mínimo lanzado en :8000. |
 | 2026-10-27 | Aprendido: 1) instalar torch cu124 y que pip/ultralytics no lo substituya por la rueda CPU de PyPI; 2) MSMF falla con estas webcam (abre, no lee) → CAP_DSHOW + MJPG resuelto; 3) StreamingResponse para MJPEG, no Response. |
+| 2026-10-27 | FPS optimizado de 7.5 → ~16: la webcam limita a ~14-16fps; captura óptima 640x480 (detección GPU: 60 fps). ByteTrack integrado (IDs persona + eventos entra/sale con timeout 10s). Fix: cajas sin ID en frames sueltos. |
+| 2026-10-27 | FASES 2-5 IMPLEMENTADAS: tracking (tests ✅), motor de eventos (permanencia/zonas/franjas/objetos + SQLite `almacen.py`, tests ✅), dashboard completo (/historial, /eventos, /estado, /clip/...), clips ±5s MP4 (`clips.py`) + toast Windows (`notificaciones.py`). Integración con test_web.py de la otra terminal adaptada. 42/42 tests verdes. Push por fase: v1, y commit fases 2-5. |
 
 ## Datos técnicos acumulados
 

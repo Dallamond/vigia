@@ -1,0 +1,33 @@
+# Vigia - configuracion principal
+# modificar recargando el servidor (no hay recarga caliente todavia)
+
+almacen: vigia.db
+
+# Permanencia: si una persona no sale de la vista durante X seg -> evento `permanencia`
+permanencia_seg: 30
+
+# Vigilancia de objetos: si la clase desaparece de la vista durante
+# timeout_objeto_seg -> evento `objeto_desaparece` / reaparicion -> `objeto_aparece`
+vigilar_desaparicion:
+  - laptop
+  - backpack
+  - cell phone
+timeout_objeto_seg: 10
+
+# Zonas: dict nombre -> (x1, y1, x2, y2) en pixeles del frame 640x480.
+# Un evento que ocurra dentro de una zona la anota en el detalle.
+# Comentar la zona para desactivarla.
+# zonas:
+#   puerta: [0, 0, 120, 300]
+#   escritorio: [200, 300, 600, 480]
+
+# Franjas horarias: solo se generan eventos dentro de la franja (formato HH:MM).
+# Franja que cruza medianoche (ej. 22:00-08:00) se soporta.
+# Ejemplo (activar solo de madrugada):
+# franjas:
+#   - desde: "22:00"
+#     hasta: "08:00"
+
+# Fase 5
+guardar_clips: true    # clip ±5s al disparar un evento relevante
+notificar: true        # toast de Windows al disparar un evento relevante
