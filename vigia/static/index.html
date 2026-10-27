@@ -161,18 +161,57 @@
   .tag.permanencia{color:#fde68a;border-color:#6b5a1f}
   .tag.actividad{color:#ddd6fe;border-color:#4c3f8a}
   .tag.objeto_desaparece,.tag.objeto_aparece{color:#bae6fd;border-color:#1e5f7a}
+  .tag.persona_reconocida{color:#99f6e4;border-color:#1f6b60}
+  .tag.cara_desconocida{color:#fed7aa;border-color:#7a4a1f}
 
-  .tl-head{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
-  .tl{position:relative;height:54px;background:#0c131b;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  .tl .hour{position:absolute;top:0;bottom:0;width:1px;background:#1a2733}
-  .tl .hour span{position:absolute;top:2px;left:3px;font-size:.62rem;color:#54697c}
-  .tl .mark{
-    position:absolute;top:20px;width:3px;height:22px;border-radius:2px;background:var(--accent2);
-    transform:translateX(-1px);cursor:pointer;opacity:.9;
-  }
-  .tl .mark:hover{opacity:1;box-shadow:0 0 0 3px rgba(56,189,248,.2)}
-  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.74rem;color:var(--mute);margin-top:8px}
+  /* ---- linea del tiempo (ancho completo, parte inferior) ---- */
+  .tlcard{margin:0 22px 28px}
+  .tl-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .tl-head h2{margin:0;font-size:.86rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600}
+  .tl-head input[type=date]{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.8rem}
+  .tl-head .grow{flex:1}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:.76rem;font-weight:700;letter-spacing:.1em;color:var(--bad)}
+  .live i{width:9px;height:9px;border-radius:50%;background:var(--bad);animation:pulse 1.4s infinite}
+  .live.off{color:var(--mute)}
+  .live.off i{background:var(--mute);animation:none}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(248,113,113,.6)}100%{box-shadow:0 0 0 8px rgba(248,113,113,0)}}
+  .tl2{display:grid;grid-template-columns:92px minmax(0,1fr);padding:12px 14px 6px;gap:0}
+  .tl2 .labels{display:flex;flex-direction:column;padding-top:23px}
+  .tl2 .labels div{height:30px;display:flex;align-items:center;font-size:.7rem;color:var(--mute);text-transform:uppercase;letter-spacing:.08em}
+  .plot{position:relative;height:173px;background:#0c131b;border:1px solid var(--line);border-radius:10px;overflow:hidden;user-select:none}
+  .plot .tick{position:absolute;top:0;bottom:0;width:1px;background:#1a2733}
+  .plot .tick span{position:absolute;top:4px;left:5px;font-size:.66rem;color:#6a8195;white-space:nowrap}
+  .plot .lane{position:absolute;left:0;right:0;height:30px;border-top:1px solid #15202b}
+  .plot .lane.alt{background:rgba(255,255,255,.015)}
+  .plot .m{position:absolute;top:7px;width:8px;height:16px;border-radius:3px;transform:translateX(-4px);cursor:pointer;opacity:.92}
+  .plot .m:hover,.plot .bar:hover{opacity:1;outline:2px solid rgba(230,237,245,.55)}
+  .plot .bar{position:absolute;top:8px;height:14px;min-width:6px;border-radius:7px;background:rgba(74,222,128,.32);border:1px solid #2f9e5f;cursor:pointer}
+  .plot .bar.vivo{background:rgba(74,222,128,.6);box-shadow:0 0 10px rgba(74,222,128,.45)}
+  .plot .nowline{position:absolute;top:0;bottom:0;width:2px;background:var(--bad);box-shadow:0 0 8px rgba(248,113,113,.8);z-index:3;pointer-events:none}
+  .plot .nowline::after{content:'ahora';position:absolute;top:4px;left:5px;font-size:.62rem;color:var(--bad);font-weight:700}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.74rem;color:var(--mute);padding:4px 14px 10px 106px}
   .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+  .strip{display:flex;gap:10px;overflow-x:auto;padding:4px 14px 14px;border-top:1px solid var(--line);padding-top:12px}
+  .strip::-webkit-scrollbar{height:8px}
+  .strip::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+  .sc{flex:0 0 156px;background:#0f1720;border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer}
+  .sc:hover{border-color:var(--line2);background:#121d28}
+  .sc .img{width:100%;height:88px;object-fit:cover;display:block;background:#05080b}
+  .sc .noimg{height:88px;display:flex;align-items:center;justify-content:center;color:#3d5164;font-size:1.4rem;background:#080c11}
+  .sc .b{padding:6px 8px;font-size:.74rem;line-height:1.3}
+  .sc .b b{display:block;font-size:.78rem}
+  .sc .b small{color:var(--mute);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #tip{position:fixed;z-index:90;pointer-events:none;display:none;background:#0d141b;border:1px solid var(--line2);border-radius:10px;padding:8px 10px;font-size:.78rem;box-shadow:var(--shadow);max-width:260px}
+  #tip img{display:block;width:100%;border-radius:6px;margin-bottom:6px}
+  #tip small{color:var(--mute)}
+  @media (max-width:700px){
+    .tlcard{margin:0 10px 20px}
+    .tl2{grid-template-columns:64px minmax(0,1fr);padding:10px 8px 4px}
+    .tl2 .labels div{font-size:.6rem}
+    .legend{padding-left:10px}
+  }
+  .carita{width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line2);background:#05080b}
+  .reg{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 14px}
 
   .acts{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
   .act-chip{display:flex;gap:8px;align-items:center;background:#0f1720;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:.85rem}
@@ -228,6 +267,8 @@
     <span class="pill" id="pRes">–</span>
   </div>
   <div class="actions">
+    <select class="btn" id="selCam" title="Webcam en uso"></select>
+    <button class="btn" id="btnCaras">☺ Caras</button>
     <button class="btn" id="btnZonas">◫ Zonas</button>
     <button class="btn" id="btnAjustes">⚙ Ajustes</button>
   </div>
@@ -263,7 +304,6 @@
       <div class="tabs" id="tabs">
         <button data-tab="hist" class="on">Historial</button>
         <button data-tab="clips">Clips</button>
-        <button data-tab="time">Timeline</button>
       </div>
       <div class="tab" id="tab-hist">
         <div class="filters">
@@ -272,6 +312,7 @@
             <option>persona_entra</option><option>persona_salio</option>
             <option>permanencia</option><option>actividad</option>
             <option>objeto_aparece</option><option>objeto_desaparece</option>
+            <option>persona_reconocida</option><option>cara_desconocida</option>
           </select>
           <input id="fdesde" type="date" title="desde">
           <select id="flimite"><option>15</option><option>50</option><option>100</option><option>300</option></select>
@@ -282,22 +323,6 @@
       <div class="tab" id="tab-clips" hidden>
         <div class="rows" id="clips"><div class="empty">cargando…</div></div>
       </div>
-      <div class="tab" id="tab-time" hidden>
-        <div class="tl-head">
-          <input id="tdia" type="date" class="filters">
-          <button class="btn sm ghost" id="btnTl">↻</button>
-          <span class="chip" id="tlTotal">0 eventos</span>
-        </div>
-        <div class="tl" id="tl"></div>
-        <div class="legend">
-          <span><i style="background:#4ade80"></i>entra</span>
-          <span><i style="background:#f87171"></i>sale</span>
-          <span><i style="background:#fbbf24"></i>permanencia</span>
-          <span><i style="background:#a78bfa"></i>actividad</span>
-          <span><i style="background:#38bdf8"></i>objeto</span>
-        </div>
-        <div class="rows" id="tlRows" style="margin-top:8px"></div>
-      </div>
     </section>
 
     <section class="card">
@@ -306,6 +331,42 @@
     </section>
   </aside>
 </main>
+
+<!-- Linea del tiempo: ancho completo, en directo -->
+<section class="card tlcard" id="tlcard">
+  <div class="tl-head">
+    <h2>Línea del tiempo</h2>
+    <span class="live" id="tlLive"><i></i><span id="tlLiveTxt">EN DIRECTO</span></span>
+    <span class="chip" id="tlAhora" style="margin-left:0">–</span>
+    <span class="grow"></span>
+    <button class="btn sm ghost" id="tlAtras" title="Desplazar hacia atrás">◀</button>
+    <div class="seg" id="tlRango">
+      <button data-h="1">1 h</button>
+      <button data-h="6" class="on">6 h</button>
+      <button data-h="24">24 h</button>
+    </div>
+    <button class="btn sm ghost" id="tlAdelante" title="Desplazar hacia delante">▶</button>
+    <button class="btn sm" id="tlAhoraBtn" title="Volver al directo">Ahora</button>
+    <input id="tdia" type="date" title="Ver un día completo">
+    <span class="chip" id="tlTotal">0 eventos</span>
+  </div>
+  <div class="tl2">
+    <div class="labels">
+      <div>Presencia</div><div>Permanencia</div><div>Actividad</div><div>Objetos</div><div>Caras</div>
+    </div>
+    <div class="plot" id="plot"></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#4ade80"></i>persona dentro</span>
+    <span><i style="background:#fbbf24"></i>permanencia</span>
+    <span><i style="background:#a78bfa"></i>actividad</span>
+    <span><i style="background:#38bdf8"></i>objeto</span>
+    <span><i style="background:#2dd4bf"></i>reconocida</span>
+    <span><i style="background:#fb923c"></i>desconocida</span>
+  </div>
+  <div class="strip" id="strip"><div class="empty">sin eventos en esta ventana</div></div>
+</section>
+<div id="tip"></div>
 
 <!-- Editor de zonas -->
 <div class="modal" id="mZonas">
@@ -364,11 +425,36 @@
       <label class="check"><input type="checkbox" id="a_miniaturas"> guardar miniatura de cada evento</label>
       <label class="check"><input type="checkbox" id="a_notificar"> avisos de Windows</label>
       <label class="check"><input type="checkbox" id="a_actividades"> detectar actividades (pose)</label>
+      <label class="check"><input type="checkbox" id="a_caras"> reconocer caras (registro en ☺ Caras)</label>
     </div>
     <div class="mfoot">
       <span id="ajustes_msg" class="hint" style="margin-right:auto"></span>
       <button class="btn" data-close="mAjustes">Cancelar</button>
       <button class="btn primary" id="aGuardar">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Caras conocidas -->
+<div class="modal" id="mCaras">
+  <div class="box narrow">
+    <div class="mh"><h3>☺ Caras conocidas</h3><button class="x" data-close="mCaras">×</button></div>
+    <div class="mb">
+      <p style="margin:0 0 10px;color:var(--mute);font-size:.84rem">
+        Colócate frente a la cámara y registra tu cara. Puedes añadir varias
+        muestras con el mismo nombre (de frente, con gafas…) para reconocer mejor.
+        Todo se queda en este PC.
+      </p>
+      <div id="cAviso" class="hint" style="margin:0 0 8px"></div>
+      <div class="reg">
+        <img class="carita" id="cImg" alt="" hidden>
+        <div style="flex:1;min-width:180px">
+          <input class="field" id="cNombre" placeholder="Nombre" maxlength="60">
+          <div class="hint" id="cEstado" style="margin:6px 0 0">buscando una cara…</div>
+        </div>
+        <button class="btn primary" id="cRegistrar" disabled>Registrar cara visible</button>
+      </div>
+      <div class="zlist" id="cLista"></div>
     </div>
   </div>
 </div>
@@ -421,30 +507,46 @@ $('btnFull').onclick = () => {
 document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#tabs button').forEach(x =>
     x.classList.toggle('on', x === b));
-  ['hist','clips','time'].forEach(t =>
+  ['hist','clips'].forEach(t =>
     $('tab-' + t).hidden = (t !== b.dataset.tab));
   if (b.dataset.tab === 'hist') cargarHistorial();
   if (b.dataset.tab === 'clips') cargarClips();
-  if (b.dataset.tab === 'time') cargarTimeline();
 });
 
 /* ---------- modales ---------- */
+function cerrarModal(m){
+  m.classList.remove('open');
+  // al cerrar el detalle se vacia: asi el clip deja de reproducirse
+  if (m.id === 'mDetalle') $('dCuerpo').innerHTML = '';
+}
 document.querySelectorAll('[data-close]').forEach(b =>
-  b.onclick = () => $(b.dataset.close).classList.remove('open'));
+  b.onclick = () => cerrarModal($(b.dataset.close)));
 document.querySelectorAll('.modal').forEach(m =>
-  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
+  m.addEventListener('click', e => { if (e.target === m) cerrarModal(m); }));
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.querySelectorAll('.modal.open')
-    .forEach(m => m.classList.remove('open'));
+  if (e.key === 'Escape') document.querySelectorAll('.modal.open').forEach(cerrarModal);
 });
+
+/* fetch que lanza Error con el mensaje del servidor (detail) si algo falla */
+async function api(url, opciones){
+  const r = await fetch(url, opciones);
+  let j = {};
+  try{ j = await r.json(); }catch(e){}
+  if (!r.ok) throw new Error(j.detail || j.error || ('error ' + r.status));
+  return j;
+}
+const enJson = (metodo, cuerpo) => ({
+  method: metodo, headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify(cuerpo)});
 
 /* ---------- media ---------- */
 const media = (f) => '/media/' + encodeURIComponent(f);
 
 function claseEvento(tipo){
-  if (tipo.includes('entra') || tipo.includes('aparece')) return 'entra';
+  if (tipo.includes('entra') || tipo.includes('aparece')
+      || tipo === 'persona_reconocida') return 'entra';
   if (tipo.includes('salio') || tipo.includes('desaparece')) return 'salio';
-  if (tipo === 'permanencia') return 'aviso';
+  if (tipo === 'permanencia' || tipo === 'cara_desconocida') return 'aviso';
   if (tipo === 'actividad') return 'act';
   return '';
 }
@@ -468,7 +570,7 @@ function verEvento(e){
   $('dTitulo').textContent = e.tipo + (e.detalle ? ' — ' + e.detalle : '');
   let html = '';
   if (e.miniatura) html += `<img class="detail-media" src="${media(e.miniatura)}" alt="miniatura" onerror="this.remove()">`;
-  if (e.clip) html += `<video class="detail-media" controls preload="metadata" src="${media(e.clip)}" onerror="this.remove()"></video>`;
+  if (e.clip) html += `<video class="detail-media" controls preload="metadata" playsinline src="${media(e.clip)}" data-f="${esc(e.clip)}"></video>`;
   if (!e.miniatura && !e.clip) html += '<p class="empty">Este evento no tiene captura guardada.</p>';
   html += `<dl class="kv">
     <dt>Cuándo</dt><dd>${esc(cuandoDe(e) || '—')}</dd>
@@ -477,6 +579,18 @@ function verEvento(e){
     <dt>Persona</dt><dd>${e.id_tracking != null ? '#' + esc(e.id_tracking) : '—'}</dd>
   </dl>`;
   $('dCuerpo').innerHTML = html;
+  $('dCuerpo').querySelectorAll('video').forEach(v => {
+    // el clip puede estar escribiendose todavia (1-2 s): se reintenta un poco
+    let intentos = 0;
+    v.onerror = () => {
+      if (intentos++ < 3) {
+        setTimeout(() => { v.src = media(v.dataset.f) + '?r=' + intentos; v.load(); }, 1500);
+      } else {
+        v.outerHTML = '<p class="empty">No se puede reproducir este clip (formato antiguo). ' +
+          'Ejecuta <code>python -m vigia.mantener --convertir</code> para recodificarlo.</p>';
+      }
+    };
+  });
   $('mDetalle').classList.add('open');
 }
 
@@ -536,50 +650,330 @@ async function cargarClips(){
   }catch(e){ $('clips').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
 }
 
-/* ---------- timeline ---------- */
+/* ---------- linea del tiempo (ancho completo, en directo) ---------- */
+const CARRILES = ['presencia', 'permanencia', 'actividad', 'objetos', 'caras'];
+const ALTO_CARRIL = 30, ALTO_EJE = 22;
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtSQL = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+                      `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+function parseSQL(s){
+  const m = /^(\d+)-(\d+)-(\d+)[ T](\d+):(\d+):(\d+)/.exec(s || '');
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+}
+function carrilDe(tipo){
+  if (tipo === 'persona_entra' || tipo === 'persona_salio') return 0;
+  if (tipo === 'permanencia') return 1;
+  if (tipo === 'actividad') return 2;
+  if (tipo.startsWith('objeto_')) return 3;
+  if (tipo === 'persona_reconocida' || tipo === 'cara_desconocida') return 4;
+  return 3;
+}
 function colorTipo(t){
-  if (t === 'persona_entra') return '#4ade80';
-  if (t === 'persona_salio') return '#f87171';
-  if (t === 'permanencia') return '#fbbf24';
-  if (t === 'actividad') return '#a78bfa';
-  return '#38bdf8';
+  return ({persona_entra: '#4ade80', persona_salio: '#f87171', permanencia: '#fbbf24',
+           actividad: '#a78bfa', persona_reconocida: '#2dd4bf',
+           cara_desconocida: '#fb923c'})[t] || '#38bdf8';
 }
+
+/* modo: '1' | '6' | '24' (horas hasta ahora) o 'dia' (un dia completo).
+   finFijo: ventana desplazada a mano (deja de ser "en directo"). */
+const TL = {modo: '6', dia: null, finFijo: null, eventos: [], barras: [],
+            visibles: [], ids: [], ventana: null, cargando: false};
+
+function ventanaTL(){
+  const ahora = new Date();
+  if (TL.modo === 'dia' && TL.dia){
+    const [y, m, d] = TL.dia.split('-').map(Number);
+    const ini = new Date(y, m - 1, d), fin = new Date(y, m - 1, d + 1);
+    return {ini, fin, rango: fin - ini, vivo: ahora >= ini && ahora < fin, ahora};
+  }
+  const rango = (+TL.modo || 6) * 3600e3;
+  const fin = TL.finFijo || new Date(ahora.getTime() + rango * 0.03);
+  return {ini: new Date(fin.getTime() - rango), fin, rango,
+          vivo: !TL.finFijo, ahora};
+}
+
 async function cargarTimeline(){
-  const dia = $('tdia').value || hoyLocal();
-  $('tdia').value = dia;
+  if (TL.cargando) return;
+  TL.cargando = true;
   try{
-    const r = await fetch(`/timeline?dia=${encodeURIComponent(dia)}`);
-    const datos = await r.json();
-    const evs = datos.eventos || [];
-    $('tlTotal').textContent = evs.length + ' eventos';
-
-    let html = '';
-    for(let h = 1; h < 24; h++){
-      html += `<div class="hour" style="left:${(h / 24 * 100).toFixed(3)}%"><span>${h}h</span></div>`;
-    }
-    for(const e of evs){
-      const hora = horaDe(e).split(':').map(Number);
-      if (hora.length < 2 || hora.some(isNaN)) continue;
-      const seg = hora[0] * 3600 + hora[1] * 60 + (hora[2] || 0);
-      const pct = (seg / 86400 * 100).toFixed(3);
-      html += `<div class="mark" style="left:${pct}%;background:${colorTipo(e.tipo)}"
-        title="${esc(horaDe(e) + ' ' + e.tipo + ' ' + (e.detalle || ''))}"
-        data-ev='${esc(JSON.stringify(e))}'></div>`;
-    }
-    const tl = $('tl');
-    tl.innerHTML = html;
-    tl.querySelectorAll('.mark').forEach(m => m.onclick = () => {
-      try{ verEvento(JSON.parse(m.dataset.ev)); }catch(err){}
-    });
-
-    const c = $('tlRows');
-    c.innerHTML = evs.length ? evs.slice().reverse().map(filaEvento).join('')
-                             : '<div class="empty">sin eventos ese día</div>';
-    enlazarFilas(c);
-  }catch(e){ $('tl').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
+    const v = ventanaTL();
+    // 3 h de margen por detras: para emparejar entradas anteriores a la ventana
+    const desde = new Date(v.ini.getTime() - 3 * 3600e3);
+    const datos = await api('/timeline?desde=' + encodeURIComponent(fmtSQL(desde)) +
+                            '&hasta=' + encodeURIComponent(fmtSQL(v.fin)));
+    TL.eventos = datos.eventos || [];
+  }catch(e){
+    $('plot').innerHTML = '<div class="empty">no se pudo cargar</div>';
+    TL.cargando = false;
+    return;
+  }
+  TL.cargando = false;
+  pintarTimeline();
 }
-$('btnTl').onclick = cargarTimeline;
-$('tdia').onchange = cargarTimeline;
+
+/* barras de presencia: pares persona_entra / persona_salio por id */
+function calcularBarras(v){
+  const abiertas = new Map(), barras = [];
+  const cerrar = (id, fin, evSalio) => {
+    const a = abiertas.get(id);
+    if (!a) return;
+    barras.push({id, ini: a.t, fin, evEntra: a.ev, evSalio, vivo: false});
+    abiertas.delete(id);
+  };
+  for (const e of TL.eventos){
+    const t = parseSQL(e.marca_sistema);
+    if (!t) continue;
+    if (e.tipo === 'persona_entra' && e.id_tracking != null){
+      cerrar(e.id_tracking, t, null);          // mismo id reutilizado tras reinicio
+      abiertas.set(e.id_tracking, {t, ev: e});
+    } else if (e.tipo === 'persona_salio' && e.id_tracking != null){
+      if (abiertas.has(e.id_tracking)) cerrar(e.id_tracking, t, e);
+      else barras.push({id: e.id_tracking, ini: new Date(v.ini.getTime() - 1), fin: t,
+                        evEntra: null, evSalio: e, vivo: false});
+    }
+  }
+  // sin salida registrada: sigue dentro solo si la camara lo ve ahora mismo
+  for (const [id, a] of abiertas){
+    const dentro = v.vivo && TL.ids.includes(id);
+    barras.push({id, ini: a.t, fin: dentro ? v.ahora : new Date(a.t.getTime() + 20e3),
+                 evEntra: a.ev, evSalio: null, vivo: dentro});
+  }
+  return barras;
+}
+
+function ejeTicks(v){
+  const horas = v.rango / 3600e3;
+  const paso = horas <= 1.5 ? 10 : horas <= 7 ? 60 : horas <= 13 ? 120 : 180;  // minutos
+  const mid = new Date(v.ini); mid.setHours(0, 0, 0, 0);
+  const pasoMs = paso * 60e3;
+  let t = mid.getTime() + Math.ceil((v.ini - mid) / pasoMs) * pasoMs;
+  const ticks = [];
+  for (; t < v.fin.getTime(); t += pasoMs){
+    const d = new Date(t);
+    const etiqueta = (d.getHours() === 0 && d.getMinutes() === 0)
+      ? `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`
+      : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    ticks.push({t, etiqueta});
+  }
+  return ticks;
+}
+
+function pintarTimeline(){
+  const v = ventanaTL();
+  TL.ventana = v;
+  const pct = (d) => ((d.getTime ? d.getTime() : d) - v.ini.getTime()) / v.rango * 100;
+  const dentro = (p) => p >= -0.5 && p <= 100.5;
+
+  let html = '';
+  CARRILES.forEach((_, i) => {
+    html += `<div class="lane${i % 2 ? ' alt' : ''}" style="top:${ALTO_EJE + i * ALTO_CARRIL}px"></div>`;
+  });
+  for (const k of ejeTicks(v)){
+    html += `<div class="tick" style="left:${pct(k.t).toFixed(3)}%"><span>${k.etiqueta}</span></div>`;
+  }
+
+  TL.barras = calcularBarras(v);
+  TL.barras.forEach((b, i) => {
+    const a = Math.max(0, pct(b.ini)), z = Math.min(100, pct(b.fin));
+    if (z < 0 || a > 100) return;
+    html += `<div class="bar${b.vivo ? ' vivo' : ''}" data-b="${i}"
+      style="left:${a.toFixed(3)}%;width:${Math.max(0.15, z - a).toFixed(3)}%;top:${ALTO_EJE + 8}px"></div>`;
+  });
+
+  TL.visibles = [];
+  for (const e of TL.eventos){
+    if (carrilDe(e.tipo) === 0) continue;        // la presencia va en barras
+    const t = parseSQL(e.marca_sistema);
+    if (!t) continue;
+    const p = pct(t);
+    if (!dentro(p)) continue;
+    TL.visibles.push(e);
+    html += `<div class="m" data-i="${TL.visibles.length - 1}"
+      style="left:${p.toFixed(3)}%;top:${ALTO_EJE + carrilDe(e.tipo) * ALTO_CARRIL + 7}px;background:${colorTipo(e.tipo)}"></div>`;
+  }
+  if (v.vivo && v.ahora >= v.ini && v.ahora <= v.fin){
+    html += `<div class="nowline" id="nowline" style="left:${pct(v.ahora).toFixed(3)}%"></div>`;
+  }
+  $('plot').innerHTML = html;
+
+  // cabecera: estado en directo
+  $('tlLive').classList.toggle('off', !v.vivo);
+  $('tlLiveTxt').textContent = v.vivo ? 'EN DIRECTO' : 'HISTÓRICO';
+  const enVentana = TL.eventos.filter(e => {
+    const t = parseSQL(e.marca_sistema);
+    return t && t >= v.ini && t <= v.fin;
+  });
+  $('tlTotal').textContent = enVentana.length + ' eventos';
+
+  // tira de tarjetas: los ultimos eventos de la ventana, el mas reciente primero
+  const recientes = enVentana.slice().reverse().slice(0, 40);
+  TL.tarjetas = recientes;
+  $('strip').innerHTML = recientes.length ? recientes.map((e, i) => `
+    <div class="sc" data-t="${i}">
+      ${e.miniatura ? `<img class="img" src="${media(e.miniatura)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=&quot;noimg&quot;>▣</div>'">`
+                    : '<div class="noimg">▣</div>'}
+      <div class="b"><b><span class="tag ${esc(e.tipo)}">${esc(e.tipo)}</span></b>
+        <small>${esc(horaDe(e))} · ${esc(e.detalle || '—')}</small></div>
+    </div>`).join('') : '<div class="empty">sin eventos en esta ventana</div>';
+}
+
+/* interaccion: tooltip, clic para abrir el detalle */
+const tip = $('tip');
+function ponerTip(ev, html){
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(ev.clientX + 14, window.innerWidth - w - 8) + 'px';
+  tip.style.top = Math.max(8, ev.clientY - h - 12) + 'px';
+}
+function htmlTip(e, extra){
+  return (e && e.miniatura ? `<img src="${media(e.miniatura)}" alt="">` : '') +
+    `<b>${esc(e ? e.tipo : '')}</b> <small>${esc(e ? horaDe(e) : '')}</small><br>` +
+    `<small>${esc((e && e.detalle) || '')}${extra || ''}</small>`;
+}
+$('plot').addEventListener('mouseover', ev => {
+  const m = ev.target.closest('.m, .bar');
+  if (!m) return;
+  if (m.dataset.i != null) ponerTip(ev, htmlTip(TL.visibles[+m.dataset.i]));
+  else {
+    const b = TL.barras[+m.dataset.b];
+    const dur = Math.max(1, Math.round((b.fin - b.ini) / 1000));
+    ponerTip(ev, htmlTip(b.evEntra || b.evSalio,
+      `<br>persona #${esc(b.id)} · ${b.vivo ? 'dentro ahora' : dur + ' s'}`));
+  }
+});
+$('plot').addEventListener('mouseout', () => { tip.style.display = 'none'; });
+$('plot').addEventListener('click', ev => {
+  const m = ev.target.closest('.m, .bar');
+  if (!m) return;
+  tip.style.display = 'none';
+  if (m.dataset.i != null) verEvento(TL.visibles[+m.dataset.i]);
+  else {
+    const b = TL.barras[+m.dataset.b];
+    const e = b.evEntra || b.evSalio;
+    if (e) verEvento(e);
+  }
+});
+$('strip').addEventListener('click', ev => {
+  const c = ev.target.closest('.sc');
+  if (c && TL.tarjetas[+c.dataset.t]) verEvento(TL.tarjetas[+c.dataset.t]);
+});
+
+/* controles */
+function marcarRango(){
+  document.querySelectorAll('#tlRango button').forEach(b =>
+    b.classList.toggle('on', TL.modo !== 'dia' && b.dataset.h === TL.modo));
+}
+document.querySelectorAll('#tlRango button').forEach(b => b.onclick = () => {
+  TL.modo = b.dataset.h; TL.finFijo = null; $('tdia').value = '';
+  marcarRango(); cargarTimeline();
+});
+function desplazar(signo){
+  const v = ventanaTL();
+  if (TL.modo === 'dia'){
+    const [y, m, d] = TL.dia.split('-').map(Number);
+    const nuevo = new Date(y, m - 1, d + signo);
+    TL.dia = `${nuevo.getFullYear()}-${pad2(nuevo.getMonth() + 1)}-${pad2(nuevo.getDate())}`;
+    $('tdia').value = TL.dia;
+  } else {
+    const fin = new Date(v.fin.getTime() + signo * v.rango / 2);
+    TL.finFijo = (signo > 0 && fin >= new Date()) ? null : fin;   // alcanzo el presente
+  }
+  cargarTimeline();
+}
+$('tlAtras').onclick = () => desplazar(-1);
+$('tlAdelante').onclick = () => desplazar(1);
+$('tlAhoraBtn').onclick = () => {
+  if (TL.modo === 'dia') TL.modo = '6';
+  TL.finFijo = null; $('tdia').value = '';
+  marcarRango(); cargarTimeline();
+};
+$('tdia').onchange = () => {
+  if (!$('tdia').value){ $('tlAhoraBtn').onclick(); return; }
+  TL.modo = 'dia'; TL.dia = $('tdia').value; TL.finFijo = null;
+  marcarRango(); cargarTimeline();
+};
+
+/* en directo: se repinta cada 2 s (la ventana se desliza) y se recarga cada 6 s */
+setInterval(() => { if (TL.ventana && ventanaTL().vivo && !document.hidden) pintarTimeline(); }, 2000);
+setInterval(() => { if (ventanaTL().vivo && !document.hidden) cargarTimeline(); }, 6000);
+
+
+/* ---------- webcam ---------- */
+async function cargarCamaras(refrescar){
+  try{
+    const d = await api('/camaras' + (refrescar ? '?refrescar=true' : ''));
+    $('selCam').innerHTML = d.camaras.map(c =>
+      `<option value="${c.indice}"${c.indice === d.actual ? ' selected' : ''}>` +
+      `📷 Cámara ${c.indice}${c.disponible ? '' : ' (no responde)'}</option>`).join('');
+  }catch(e){}
+}
+$('selCam').onchange = async () => {
+  try{
+    await api('/config', enJson('POST', {camara: +$('selCam').value}));
+    toast('Cambiando de cámara…');
+    setTimeout(() => cargarCamaras(true), 4000);   // confirma cual quedo (revierte si falla)
+  }catch(e){ toast('Cámara: ' + e.message, false); cargarCamaras(); }
+};
+$('selCam').onfocus = () => cargarCamaras(true);
+
+/* ---------- caras conocidas ---------- */
+let sondeoCaras = false;
+async function listarCaras(){
+  try{
+    const lista = await api('/caras/registro');
+    $('cLista').innerHTML = lista.length ? lista.map(r => `<div class="zitem">
+        <input value="${esc(r.nombre)}" data-id="${r.id}" maxlength="60">
+        <small>muestra #${r.id}</small>
+        <button class="btn sm danger" data-borrar="${r.id}" title="Borrar esta muestra">✕</button>
+      </div>`).join('') : '<div class="empty">todavía no hay nadie registrado</div>';
+    $('cLista').querySelectorAll('input[data-id]').forEach(inp => inp.onchange = async () => {
+      try{
+        await api('/caras/registro', enJson('POST', {id: +inp.dataset.id, nombre: inp.value}));
+        toast('Nombre actualizado');
+      }catch(e){ toast(e.message, false); listarCaras(); }
+    });
+    $('cLista').querySelectorAll('[data-borrar]').forEach(b => b.onclick = async () => {
+      try{ await api('/caras/registro/' + b.dataset.borrar, {method: 'DELETE'}); listarCaras(); }
+      catch(e){ toast(e.message, false); }
+    });
+  }catch(e){ $('cLista').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
+}
+async function sondearCara(){
+  if (sondeoCaras) return;
+  sondeoCaras = true;
+  while ($('mCaras').classList.contains('open')){
+    try{
+      const d = await api('/caras/ultima');
+      $('cRegistrar').disabled = !d.disponible;
+      $('cEstado').textContent = d.disponible ? 'cara detectada: lista para registrar'
+                                              : 'buscando una cara… mira a la cámara';
+      $('cImg').hidden = !d.disponible;
+      if (d.disponible) $('cImg').src = '/caras/ultima.jpg?t=' + Date.now();
+    }catch(e){}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  sondeoCaras = false;
+}
+$('btnCaras').onclick = async () => {
+  $('mCaras').classList.add('open');
+  listarCaras();
+  sondearCara();
+  try{
+    const c = await api('/config');
+    $('cAviso').textContent = c.caras ? ''
+      : 'El reconocimiento de caras está desactivado: actívalo en ⚙ Ajustes.';
+  }catch(e){}
+};
+$('cRegistrar').onclick = async () => {
+  const nombre = $('cNombre').value.trim();
+  if (!nombre){ toast('Escribe un nombre', false); $('cNombre').focus(); return; }
+  try{
+    await api('/caras/registro', enJson('POST', {nombre, capturar: true}));
+    toast('Cara registrada: ' + nombre);
+    listarCaras();
+  }catch(e){ toast(e.message, false); }
+};
 
 /* ---------- zonas ---------- */
 let zonas = {};          // nombre -> [x1,y1,x2,y2]
@@ -693,14 +1087,10 @@ $('zCanvas').addEventListener('pointerup', () => {
 });
 $('zGuardar').onclick = async () => {
   try{
-    const r = await fetch('/zonas', {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({zonas})
-    });
-    const res = await r.json();
-    if(res.ok){ toast('Zonas guardadas y aplicadas'); $('mZonas').classList.remove('open'); }
-    else toast(res.error || 'no se pudieron guardar', false);
-  }catch(e){ toast('error: ' + e.message, false); }
+    await api('/zonas', enJson('PUT', {zonas}));
+    toast('Zonas guardadas y aplicadas');
+    $('mZonas').classList.remove('open');
+  }catch(e){ toast('Zonas: ' + e.message, false); }
 };
 
 /* ---------- ajustes ---------- */
@@ -723,6 +1113,7 @@ $('btnAjustes').onclick = async () => {
     $('a_miniaturas').checked = c.miniaturas !== false;
     $('a_notificar').checked = !!c.notificar;
     $('a_actividades').checked = !!c.actividades;
+    $('a_caras').checked = !!c.caras;
   }catch(e){}
 };
 $('aGuardar').onclick = async () => {
@@ -745,21 +1136,16 @@ $('aGuardar').onclick = async () => {
     guardar_clips: $('a_clips').checked,
     miniaturas: $('a_miniaturas').checked,
     notificar: $('a_notificar').checked,
-    actividades: $('a_actividades').checked
+    actividades: $('a_actividades').checked,
+    caras: $('a_caras').checked
   };
   try{
-    const r = await fetch('/config', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(cuerpo)
-    });
-    const res = await r.json();
-    if(res.ok){
-      toast(res.reinicio ? 'Ajustes guardados: reinicia para aplicar la resolución'
-                         : 'Ajustes aplicados');
-      $('mAjustes').classList.remove('open');
-    }
-    else toast(res.error || 'no se pudo guardar', false);
-  }catch(e){ toast('error: ' + e.message, false); }
+    const res = await api('/config', enJson('POST', cuerpo));
+    if(res.ok === false){ toast('Aplicado, pero no se pudo guardar en config.yaml', false); return; }
+    toast(res.reinicio ? 'Ajustes guardados: reinicia para aplicar la resolución'
+                       : 'Ajustes aplicados');
+    $('mAjustes').classList.remove('open');
+  }catch(e){ toast('Ajustes: ' + e.message, false); }
 };
 
 /* ---------- salud y estado ---------- */
@@ -778,15 +1164,19 @@ async function tick(){
     dot.className = 'dot ' + (s.camara_ok ? 'ok' : 'bad');
     $('stage').classList.toggle('offline', !s.camara_ok);
 
-    if(l.length !== ultimoEstadoOk && ultimoEstadoOk !== null){
-      // solo refrescamos historial si hay eventos nuevos
+    TL.ids = s.ids || [];
+    $('tlAhora').textContent = (s.personas || 0) === 1 ? '1 persona ahora'
+                                                       : (s.personas || 0) + ' personas ahora';
+    const huella = l.length ? l[0].hora + l[0].tipo + l[0].etiqueta : '';
+    if(huella !== ultimoEstadoOk && ultimoEstadoOk !== null){
+      // evento nuevo: historial y linea del tiempo al instante
       cargarHistorial();
+      if (ventanaTL().vivo) cargarTimeline();
     }
-    ultimoEstadoOk = l.length;
+    ultimoEstadoOk = huella;
 
     $('actCount').textContent = l.length;
     $('feed').innerHTML = l.length ? l.map(e => {
-      const el = document.createElement('div');
       const tipo = e.tipo || '';
       return `<div class="ev ${claseEvento(tipo)}">
         <span class="t">${esc(e.hora || '')}</span>
@@ -818,10 +1208,8 @@ async function salud(){
 }
 
 /* ---------- arranque ---------- */
-const hoy = new Date().toISOString().slice(0, 10);
-$('tdia').value = hoy;
 $('fdesde').value = '';
-tick(); cargarHistorial(); salud();
+tick(); cargarHistorial(); cargarTimeline(); salud(); cargarCamaras();
 setInterval(tick, 1500);
 setInterval(salud, 15000);
 setInterval(() => { if(!$('tab-hist').hidden) cargarHistorial(); }, 8000);

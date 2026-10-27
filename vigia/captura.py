@@ -14,6 +14,32 @@ _ESPERA_ENTRE_INTENTOS = 0.1
 _BACKEND = cv2.CAP_DSHOW  # MSMF falla con muchas webcams Windows (abre pero no lee)
 
 
+def detectar_camaras(maximo: int = 6, ocupada: int | None = None,
+                     backend: int = _BACKEND) -> list[dict]:
+    """Webcams disponibles (indices 0..maximo-1).
+
+    OpenCV no da nombres, solo indices. La que esta en uso (`ocupada`) no se
+    puede abrir dos veces, asi que se da por disponible sin probarla.
+    """
+    camaras = []
+    for i in range(maximo):
+        if i == ocupada:
+            camaras.append({"indice": i, "disponible": True})
+            continue
+        cap = None
+        try:
+            cap = cv2.VideoCapture(i, backend)
+            ok = bool(cap.isOpened() and cap.read()[0])
+        except cv2.error:
+            ok = False
+        finally:
+            if cap is not None:
+                cap.release()
+        if ok:
+            camaras.append({"indice": i, "disponible": True})
+    return camaras
+
+
 class CamaraError(RuntimeError):
     """La cámara no está disponible."""
 
@@ -81,6 +107,22 @@ class Camara:
                 cap.release()
         self._siguiente_reintento()
         log.debug("Cámara no disponible todavía (fuente %r)", self.fuente)
+        return False
+
+    def cambiar(self, fuente: int | str) -> bool:
+        """Cambia de webcam en caliente. Si la nueva no abre, vuelve a la anterior."""
+        anterior = self.fuente
+        self.liberar()
+        self.fuente = fuente
+        self._siguiente_intento = 0.0
+        if self.abrir():
+            log.info("Camara cambiada: %s -> %s", anterior, fuente)
+            return True
+        log.warning("No se pudo abrir la camara %s; se vuelve a la %s",
+                    fuente, anterior)
+        self.fuente = anterior
+        self._siguiente_intento = 0.0
+        self.abrir()
         return False
 
     def abrir_bloqueante(self, timeout: float | None = None) -> bool:

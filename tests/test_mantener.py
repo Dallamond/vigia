@@ -144,3 +144,30 @@ def test_mantener_limpia_referencias_tras_purgar(tmp_path):
     assert res["media_huerfana"] == 1
     assert a.historial()[0]["miniatura"] is None
     a.cerrar()
+
+
+def test_purgar_media_incluye_webm_e_ignora_los_temporales(tmp_path):
+    _crear(tmp_path / "viejo.webm", edad_dias=40)
+    _crear(tmp_path / "~viejo.webm", edad_dias=40)
+    purgar_media(tmp_path, dias=14)
+    assert not (tmp_path / "viejo.webm").exists()
+    assert (tmp_path / "~viejo.webm").exists()  # esta escribiendose: no se toca
+
+
+def test_convertir_clips_actualiza_el_historial(tmp_path):
+    import cv2
+    import numpy as np
+    from vigia.clips import GuardadorClips
+    from vigia.mantener import convertir_clips
+    a = Almacen(tmp_path / "c.db")
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    out = cv2.VideoWriter(str(g.carpeta / "a.mp4"),
+                          cv2.VideoWriter_fourcc(*"mp4v"), 10, (64, 48))
+    for _ in range(3):
+        out.write(np.zeros((48, 64, 3), np.uint8))
+    out.release()
+    ev = a.guardar("persona_entra")
+    a.anotar_media(ev, clip="a.mp4")
+    assert convertir_clips(a, g) == 1
+    assert a.historial()[0]["clip"] == "a.webm"
+    a.cerrar()

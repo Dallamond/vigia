@@ -289,7 +289,7 @@ def test_zonas_put_aplica_y_persiste(monkeypatch, cliente, tmp_path):
         assert (tmp_path / "config.yaml").exists()
 
         r = cliente.put("/zonas", json={"zonas": {"mala": [1, 2]}})
-        assert r.status_code == 200 and r.json()["ok"] is False
+        assert r.status_code == 400
     finally:
         web._motor_compartido.zonas = zonas_antes
         web._config.clear()
@@ -546,3 +546,196 @@ def test_bucle_llena_el_buffer_al_activar_clips_en_caliente(tmp_path):
         hilo.join(2)
         a.cerrar()
 
+
+# -- timeline, media webm y registro de caras ------------------------------
+
+def test_timeline_por_ventana(monkeypatch, cliente, tmp_path):
+    a = Almacen(tmp_path / "w.db")
+    a.guardar("persona_entra", cuando="2026-10-27 23:50:00")
+    a.guardar("persona_salio", cuando="2026-10-28 00:10:00")
+    a.guardar("persona_entra", cuando="2026-10-28 05:00:00")
+    monkeypatch.setattr(web, "_almacen", a)
+    datos = cliente.get("/timeline", params={
+        "desde": "2026-10-27 23:00:00", "hasta": "2026-10-28 01:00:00"}).json()
+    assert datos["total"] == 2  # cruza la medianoche
+    assert [e["tipo"] for e in datos["eventos"]] == ["persona_entra",
+                                                     "persona_salio"]
+    a.cerrar()
+
+
+def test_timeline_rechaza_ventanas_malas(cliente):
+    assert cliente.get("/timeline", params={
+        "desde": "ayer", "hasta": "hoy"}).status_code == 400
+    assert cliente.get("/timeline", params={
+        "desde": "2026-10-28 00:00:00",
+        "hasta": "2026-10-27 00:00:00"}).status_code == 400
+    assert cliente.get("/timeline", params={
+        "desde": "2026-01-01 00:00:00",
+        "hasta": "2026-10-27 00:00:00"}).status_code == 400
+
+
+def test_estado_incluye_los_ids_de_las_personas(monkeypatch, cliente):
+    e = Estado()
+    e.actualizar(b"j", 10.0, [], {4, 2}, True)
+    monkeypatch.setattr(web, "estado", e)
+    assert cliente.get("/estado").json()["ids"] == [2, 4]
+
+
+def test_media_sirve_webm_y_oculta_los_clips_a_medio_escribir(
+        monkeypatch, cliente, tmp_path):
+    carpeta = tmp_path / "media"
+    carpeta.mkdir()
+    (carpeta / "a.webm").write_bytes(b"\x1aE\xdf\xa3datos")
+    (carpeta / "~b.webm").write_bytes(b"\x1aE\xdf\xa3parcial")
+    monkeypatch.setattr(web, "_clips", _ClipsFalso(carpeta))
+    r = cliente.get("/media/a.webm")
+    assert r.status_code == 200 and r.headers["content-type"] == "video/webm"
+    assert cliente.get("/media/~b.webm").status_code == 404
+    assert cliente.get("/clip/~b.webm").status_code == 404
+
+
+@pytest.fixture
+def registro(monkeypatch, tmp_path):
+    a = Almacen(tmp_path / "caras.db")
+    monkeypatch.setattr(web, "_almacen", a)
+    web.bucle_caras_recarga.clear()
+    web._ultima_cara.clear()
+    yield a
+    web._ultima_cara.clear()
+    a.cerrar()
+
+
+def test_registro_caras_valida_el_embedding(cliente, registro):
+    r = cliente.post("/caras/registro", json={"nombre": "A", "embedding": [1, 2]})
+    assert r.status_code == 400
+    r = cliente.post("/caras/registro",
+                     json={"nombre": "A", "embedding": ["x"] * 128})
+    assert r.status_code == 400
+    r = cliente.post("/caras/registro", json={"nombre": "", "embedding": [0] * 128})
+    assert r.status_code == 400
+    assert registro.rostros() == []
+
+
+def test_registro_caras_alta_renombrar_y_borrar(cliente, registro):
+    emb = [0.1] * 128
+    assert cliente.post("/caras/registro",
+                        json={"nombre": "Lucas", "embedding": emb}).json()["ok"]
+    assert web.bucle_caras_recarga.is_set()  # el bucle recargara los conocidos
+    fila = cliente.get("/caras/registro").json()[0]
+    assert fila["nombre"] == "Lucas" and "embedding" not in fila
+
+    assert cliente.post("/caras/registro",
+                        json={"nombre": "Lucas F", "id": fila["id"]}).json()["ok"]
+    nuevo = cliente.get("/caras/registro").json()
+    assert [r["nombre"] for r in nuevo] == ["Lucas F"]
+    assert nuevo[0]["id"] == fila["id"]  # renombrar no cambia el id
+    assert registro.rostros()[0]["embedding"] == np.float32(emb).tobytes()
+
+    assert cliente.post("/caras/registro",
+                        json={"nombre": "x", "id": "abc"}).status_code == 400
+    assert cliente.post("/caras/registro",
+                        json={"nombre": "x", "id": 999}).status_code == 404
+    assert cliente.delete(f"/caras/registro/{fila['id']}").json()["ok"]
+    assert cliente.delete("/caras/registro/999").status_code == 404
+
+
+def test_registro_caras_capturar_la_cara_visible(cliente, registro):
+    r = cliente.post("/caras/registro", json={"nombre": "Lucas", "capturar": True})
+    assert r.status_code == 409  # no se ve a nadie
+    assert cliente.get("/caras/ultima").json() == {"disponible": False}
+    assert cliente.get("/caras/ultima.jpg").status_code == 404
+
+    emb = np.arange(128, dtype=np.float32)
+    web._publicar_cara({"emb": emb, "t": time.time(), "jpeg": b"\xff\xd8jpg"})
+    assert cliente.get("/caras/ultima").json() == {"disponible": True}
+    assert cliente.get("/caras/ultima.jpg").status_code == 200
+    r = cliente.post("/caras/registro", json={"nombre": "Lucas", "capturar": True})
+    assert r.status_code == 200
+    assert registro.rostros()[0]["embedding"] == emb.tobytes()
+
+
+def test_cara_caducada_no_se_puede_registrar(cliente, registro):
+    web._publicar_cara({"emb": np.zeros(128, np.float32),
+                        "t": time.time() - 60, "jpeg": b""})
+    r = cliente.post("/caras/registro", json={"nombre": "A", "capturar": True})
+    assert r.status_code == 409
+
+
+def test_conocidos_agrupa_muestras_por_nombre_e_ignora_las_malas(registro):
+    registro.guardar_rostro("Lucas", np.ones(128, np.float32).tobytes())
+    registro.guardar_rostro("Lucas", np.full(128, 2, np.float32).tobytes())
+    registro.guardar_rostro("Roto", b"123")
+    conocidos = web._conocidos(registro)
+    assert list(conocidos) == ["Lucas"] and len(conocidos["Lucas"]) == 2
+
+
+def test_persistir_config_es_atomico_y_no_deja_temporales(monkeypatch, tmp_path):
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text("notificar: true\n", encoding="utf-8")
+    monkeypatch.setattr(web, "_RUTA_CONFIG", ruta)
+    web._persistir_config({"notificar": False})
+    assert ruta.read_text(encoding="utf-8") == "notificar: false\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["config.yaml"]
+
+
+# -- cambio de webcam -------------------------------------------------------
+
+class _CamaraCambiable:
+    def __init__(self, fuente=0, abre=True):
+        self.fuente = fuente
+        self.abre = abre
+        self.cambios = []
+
+    def cambiar(self, fuente):
+        self.cambios.append(fuente)
+        if self.abre:
+            self.fuente = fuente
+        return self.abre
+
+
+def test_aplicar_camara_cambia_en_caliente():
+    cam, config = _CamaraCambiable(0), {"camara": 1}
+    web._aplicar_camara(cam, config)
+    assert cam.fuente == 1 and cam.cambios == [1] and config["camara"] == 1
+    web._aplicar_camara(cam, config)  # sin cambios: no reabre la camara
+    assert cam.cambios == [1]
+
+
+def test_aplicar_camara_revierte_si_la_nueva_no_abre():
+    cam, config = _CamaraCambiable(0, abre=False), {"camara": 3}
+    web._aplicar_camara(cam, config)
+    assert config["camara"] == 0
+
+
+def test_aplicar_camara_ignora_camaras_falsas_de_test():
+    web._aplicar_camara(_CamaraFalsa(), {"camara": 5})  # sin .fuente: no rompe
+
+
+def test_camaras_lista_las_disponibles_y_la_actual(monkeypatch, cliente):
+    monkeypatch.setattr(web, "detectar_camaras",
+                        lambda ocupada=None: [{"indice": 0, "disponible": True},
+                                              {"indice": 2, "disponible": True}])
+    web._camaras_cache["datos"] = []
+    monkeypatch.setitem(web._config, "camara", 2)
+    d = cliente.get("/camaras?refrescar=true").json()
+    assert d["actual"] == 2
+    assert [c["indice"] for c in d["camaras"]] == [0, 2]
+
+
+def test_camaras_marca_la_actual_aunque_no_responda(monkeypatch, cliente):
+    monkeypatch.setattr(web, "detectar_camaras", lambda ocupada=None: [])
+    monkeypatch.setitem(web._config, "camara", 1)
+    d = cliente.get("/camaras?refrescar=true").json()
+    assert d["camaras"] == [{"indice": 1, "disponible": False}]
+
+
+def test_config_acepta_el_indice_de_camara(monkeypatch, cliente, tmp_path):
+    monkeypatch.setattr(web, "_RUTA_CONFIG", tmp_path / "config.yaml")
+    antes = dict(web._config)
+    try:
+        assert cliente.post("/config", json={"camara": 1}).json()["ok"] is True
+        assert web._config["camara"] == 1
+        assert cliente.post("/config", json={"camara": 99}).status_code == 400
+    finally:
+        web._config.clear()
+        web._config.update(antes)

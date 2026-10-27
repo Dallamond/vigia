@@ -38,6 +38,7 @@ _COLUMNAS_NUEVAS = {
     "clip": "TEXT",       # fichero .mp4 asociado (si lo hay)
 }
 
+_VERSION_ESQUEMA = 2
 _FORMATO = "%Y-%m-%d %H:%M:%S"
 _COLS = ("id", "marca_sistema", "marca_pantalla", "tipo", "id_tracking",
          "detalle", "miniatura", "clip")
@@ -71,7 +72,10 @@ class Almacen:
                 self.con.execute(
                     f"ALTER TABLE eventos ADD COLUMN {nombre} {tipo}")
                 log.info("BD migrada: columna %s anadida", nombre)
-        self.con.execute("PRAGMA user_version=2")
+        # solo se sube: abrir una BD de una version futura no la "degrada"
+        actual = self.con.execute("PRAGMA user_version").fetchone()[0]
+        if actual < _VERSION_ESQUEMA:
+            self.con.execute(f"PRAGMA user_version={_VERSION_ESQUEMA}")
 
     # -- escritura --------------------------------------------------------
     def guardar(self, tipo: str, id_tracking: int | None = None,
@@ -104,6 +108,14 @@ class Almacen:
                 "clip = COALESCE(?, clip) WHERE id = ?",
                 (miniatura, clip, evento_id))
             self.con.commit()
+
+    def renombrar_clip(self, viejo: str, nuevo: str) -> int:
+        """Apunta los eventos de un clip al fichero recodificado."""
+        with self._lock:
+            cur = self.con.execute(
+                "UPDATE eventos SET clip = ? WHERE clip = ?", (nuevo, viejo))
+            self.con.commit()
+            return int(cur.rowcount or 0)
 
     def limpiar_media_huerfana(self, carpeta: str | Path) -> int:
         """Quita de la BD referencias a ficheros que ya no existen en disco.
@@ -172,6 +184,24 @@ class Almacen:
                 (f"{dia} 00:00:00", f"{dia} 23:59:59", limite)).fetchall()
         return [dict(zip(_COLS, f)) for f in filas]
 
+    def eventos_entre(self, desde: str, hasta: str,
+                      limite: int = 5000) -> list[dict]:
+        """Eventos entre dos instantes (`YYYY-MM-DD HH:MM:SS`), en orden
+        cronologico: es la ventana que pinta la linea del tiempo."""
+        try:
+            datetime.strptime(desde, _FORMATO)
+            datetime.strptime(hasta, _FORMATO)
+        except (TypeError, ValueError):
+            return []
+        limite = max(1, min(int(limite or 5000), 20000))
+        with self._lock:
+            filas = self.con.execute(
+                f"SELECT {', '.join(_COLS)} FROM eventos "
+                "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                "ORDER BY marca_sistema ASC, id ASC LIMIT ?",
+                (desde, hasta, limite)).fetchall()
+        return [dict(zip(_COLS, f)) for f in filas]
+
     def contar(self) -> int:
         with self._lock:
             return int(self.con.execute(
@@ -209,12 +239,14 @@ class Almacen:
                 "DELETE FROM eventos WHERE marca_sistema < ?", (corte,))
             self.con.commit()
             borrados = int(cur.rowcount or 0)
+            if borrados:
+                # la conexion es compartida: el checkpoint tambien va bajo lock
+                try:
+                    self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error:
+                    pass
         if borrados:
             log.info("purgados %d eventos anteriores a %s", borrados, corte)
-            try:
-                self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except sqlite3.Error:
-                pass
         return borrados
 
     def limpiar(self) -> None:
@@ -239,6 +271,14 @@ class Almacen:
             filas = self.con.execute(
                 "SELECT id, nombre, embedding FROM rostros ORDER BY id").fetchall()
         return [{"id": i, "nombre": n, "embedding": e} for i, n, e in filas]
+
+    def renombrar_rostro(self, id_rostro: int, nombre: str) -> bool:
+        """Cambia el nombre de una identidad conservando su embedding."""
+        with self._lock:
+            cur = self.con.execute("UPDATE rostros SET nombre = ? WHERE id = ?",
+                                   (nombre, int(id_rostro)))
+            self.con.commit()
+        return (cur.rowcount or 0) > 0
 
     def borrar_rostro(self, id_rostro: int) -> bool:
         """Elimina una identidad por id. Devuelve si existia."""

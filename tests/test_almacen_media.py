@@ -91,3 +91,38 @@ def test_purgar_eventos_respeta_la_retencion(tmp_path):
     assert a.contar() == 1 and a.historial()[0]["tipo"] == "nuevo"
     assert a.purgar_eventos(0) == 0  # 0 = no purgar
     a.cerrar()
+
+
+def test_eventos_entre_es_cronologico_y_acotado(tmp_path):
+    a = Almacen(tmp_path / "e.db")
+    a.guardar("b", cuando="2026-10-27 12:00:00")
+    a.guardar("a", cuando="2026-10-27 10:00:00")
+    a.guardar("fuera", cuando="2026-10-27 18:00:00")
+    filas = a.eventos_entre("2026-10-27 09:00:00", "2026-10-27 13:00:00")
+    assert [f["tipo"] for f in filas] == ["a", "b"]
+    assert a.eventos_entre("no", "fecha") == []
+    a.cerrar()
+
+
+def test_renombrar_clip_y_rostro(tmp_path):
+    a = Almacen(tmp_path / "r.db")
+    ev = a.guardar("x")
+    a.anotar_media(ev, clip="viejo.mp4")
+    assert a.renombrar_clip("viejo.mp4", "nuevo.webm") == 1
+    assert a.historial()[0]["clip"] == "nuevo.webm"
+    rid = a.guardar_rostro("A", b"e")
+    assert a.renombrar_rostro(rid, "B") is True
+    assert a.renombrar_rostro(999, "C") is False
+    assert a.rostros()[0]["nombre"] == "B"
+    a.cerrar()
+
+
+def test_abrir_una_bd_mas_nueva_no_baja_su_version(tmp_path):
+    ruta = tmp_path / "v.db"
+    a = Almacen(ruta)
+    a.con.execute("PRAGMA user_version=9")
+    a.con.commit()
+    a.cerrar()
+    b = Almacen(ruta)
+    assert b.con.execute("PRAGMA user_version").fetchone()[0] == 9
+    b.cerrar()

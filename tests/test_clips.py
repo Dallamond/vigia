@@ -1,4 +1,4 @@
-"""Tests del guardador de clips MP4 (sin camara)."""
+"""Tests del guardador de clips (WebM reproducible en navegador; sin camara)."""
 import cv2
 import numpy as np
 
@@ -14,13 +14,15 @@ def test_guardar_sin_frames_no_crea_nada(tmp_path):
     assert g.guardar("persona_entra") is None
 
 
-def test_guardar_escribe_un_mp4_legible(tmp_path):
+def test_guardar_escribe_un_clip_legible(tmp_path):
     g = GuardadorClips(max_frames=5, carpeta=str(tmp_path / "clips"),
                        fps_salida=10)
     for i in range(5):
         g.meter(_frame(i * 10))
     destino = g.guardar("persona_entra")
     assert destino is not None
+    # el navegador solo reproduce VP8/VP9 en WebM; mp4v es solo el ultimo recurso
+    assert destino.suffix in (".webm", ".mp4")
     g.esperar_trabajos(10)
 
     assert destino.exists() and destino.stat().st_size > 0
@@ -50,7 +52,8 @@ def test_meter_guarda_copias_independientes(tmp_path):
     frame = _frame(10)
     g.meter(frame)
     frame[:] = 255  # mutar el original no debe afectar al buffer
-    assert g._buf[0][0, 0, 0] == 10
+    guardado = cv2.imdecode(np.frombuffer(g._buf[0], np.uint8), cv2.IMREAD_COLOR)
+    assert abs(int(guardado[0, 0, 0]) - 10) <= 3  # JPEG: casi exacto
 
 
 def test_guardar_miniatura_escribe_un_jpg_legible(tmp_path):
@@ -111,3 +114,61 @@ def test_fps_salida_se_puede_ajustar(tmp_path):
     destino = g.guardar("x")
     g.esperar_trabajos(10)
     assert destino.exists()
+
+
+def test_el_buffer_guarda_frames_comprimidos(tmp_path):
+    g = GuardadorClips(max_frames=3, carpeta=str(tmp_path / "clips"))
+    g.meter(np.zeros((480, 640, 3), np.uint8))
+    assert isinstance(g._buf[0], bytes) and len(g._buf[0]) < 640 * 480
+
+
+def test_formato_de_clip_es_reproducible_en_navegador(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    # en este equipo OpenCV sabe escribir VP8: nunca debe caer a mp4v
+    assert g.formato() == ("VP80", ".webm")
+    assert list(g.carpeta.iterdir()) == []  # la prueba no deja ficheros
+
+
+def test_un_clip_a_medio_escribir_no_se_lista_ni_cuenta(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    (g.carpeta / "~parcial.webm").write_bytes(b"x" * 10)
+    (g.carpeta / "listo.webm").write_bytes(b"x" * 20)
+    assert [c["fichero"] for c in g.listar()] == ["listo.webm"]
+    assert g.resumen_media()["n"] == 1
+    assert g.podar(max_ficheros=0) == 1
+    assert (g.carpeta / "~parcial.webm").exists()
+
+
+def test_guardar_no_deja_el_temporal(tmp_path):
+    g = GuardadorClips(max_frames=3, carpeta=str(tmp_path / "clips"))
+    for i in range(3):
+        g.meter(_frame(i))
+    g.guardar("x")
+    g.esperar_trabajos(10)
+    assert [p.name for p in g.carpeta.iterdir() if p.name.startswith("~")] == []
+    assert len(list(g.carpeta.glob("*.webm"))) == 1
+
+
+def test_convertir_antiguos_pasa_mp4v_a_webm(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    viejo = g.carpeta / "viejo.mp4"
+    out = cv2.VideoWriter(str(viejo), cv2.VideoWriter_fourcc(*"mp4v"), 10,
+                          (64, 48))
+    for i in range(5):
+        out.write(_frame(i * 20))
+    out.release()
+    assert g.convertir_antiguos() == {"viejo.mp4": "viejo.webm"}
+    assert not viejo.exists()
+    cap = cv2.VideoCapture(str(g.carpeta / "viejo.webm"))
+    try:
+        ok, frame = cap.read()
+        assert ok and frame.shape[:2] == (48, 64)
+    finally:
+        cap.release()
+
+
+def test_convertir_antiguos_no_toca_un_mp4_corrupto(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    (g.carpeta / "roto.mp4").write_bytes(b"no es un video")
+    assert g.convertir_antiguos() == {}
+    assert (g.carpeta / "roto.mp4").exists()

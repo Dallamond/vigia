@@ -150,3 +150,28 @@ def test_abrir_bloqueante_admite_timeout(sim_cv):
     sim_cv.disponible = False
     cam = Camara(abrir=False, reintento_segundos=0)
     assert cam.abrir_bloqueante(timeout=0.05) is False
+
+
+def test_detectar_camaras_prueba_solo_las_libres(monkeypatch):
+    from vigia import captura
+
+    abiertas = []
+
+    class Cap:
+        def __init__(self, i, backend):
+            self.i = i
+            abiertas.append(i)
+
+        def isOpened(self):
+            return self.i in (0, 2)
+
+        def read(self):
+            return True, None
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(captura.cv2, "VideoCapture", Cap)
+    res = captura.detectar_camaras(maximo=4, ocupada=0)
+    assert [c["indice"] for c in res] == [0, 2]
+    assert 0 not in abiertas  # la que esta en uso no se reabre

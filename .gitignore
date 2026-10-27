@@ -7,6 +7,7 @@ runs/
 .ruff_cache/
 docs/superpowers/
 *.db
+config.yaml
 *.db-wal
 *.db-shm
 *.log

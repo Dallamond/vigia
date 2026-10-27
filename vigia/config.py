@@ -13,6 +13,18 @@ from yaml import safe_load
 
 log = logging.getLogger(__name__)
 
+# raiz del proyecto: las rutas relativas (BD, clips, modelos, config) cuelgan
+# de aqui y no del directorio desde el que se lance, para que una tarea
+# programada no cree una BD vacia en otro sitio
+RAIZ = Path(__file__).resolve().parent.parent
+
+
+def ruta_proyecto(ruta: str | Path) -> Path:
+    """Ruta absoluta; las relativas se resuelven contra la raiz del proyecto."""
+    p = Path(ruta)
+    return p if p.is_absolute() else RAIZ / p
+
+
 DEFAULTS = {
     "almacen": "vigia.db",
     "permanencia_seg": 30,
@@ -26,6 +38,8 @@ DEFAULTS = {
     # captura (requiere reiniciar el dashboard para aplicarse)
     "ancho": 640,
     "alto": 480,
+    # indice de la webcam (0 = la primera); se cambia en caliente desde el panel
+    "camara": 0,
     # media: copia JPEG del instante de cada evento
     "miniaturas": True,
     # mantenimiento: 0 dias = no purgar
@@ -43,6 +57,7 @@ DEFAULTS = {
 _LIMITES = {
     "ancho": (160, 3840),
     "alto": (120, 2160),
+    "camara": (0, 9),
     "retencion_dias": (0, 3650),
     "retencion_clips_dias": (0, 3650),
     "retencion_clips_mb": (0, 1024 * 1024),
@@ -147,8 +162,8 @@ def _defaults() -> dict:
             for k, v in DEFAULTS.items()}
 
 
-def cargar_config(ruta: str | Path = "config.yaml") -> dict:
-    p = Path(ruta)
+def cargar_config(ruta: str | Path | None = None) -> dict:
+    p = Path(ruta) if ruta is not None else RAIZ / "config.yaml"
     cfg = _defaults()
     if not p.exists():
         log.info("config.yaml no existe; se usan valores por defecto")

@@ -3,7 +3,7 @@
 # Si algo esta mal escrito, Vigia avisa en el log y usa el valor por defecto.
 # Casi todo esto se puede cambiar tambien desde el panel (boton Ajustes).
 
-# Fichero SQLite de eventos (relativo al directorio desde el que arrancas).
+# Fichero SQLite de eventos (relativo a la carpeta del proyecto).
 almacen: vigia.db
 
 # --- captura ---------------------------------------------------------------
@@ -11,6 +11,8 @@ almacen: vigia.db
 # reduce los FPS. Cambiarlo requiere reiniciar el dashboard.
 ancho: 640
 alto: 480
+# Indice de la webcam (0 = la primera). Se cambia en caliente desde el panel.
+camara: 0
 
 # --- reglas ----------------------------------------------------------------
 # Segundos que una persona debe permanecer para disparar `permanencia`.
@@ -40,7 +42,7 @@ zonas:
 franjas: []
 
 # --- media -----------------------------------------------------------------
-# Guardar un MP4 de los segundos previos en los eventos importantes.
+# Guardar un clip WebM de los segundos previos en los eventos importantes.
 guardar_clips: true
 # Guardar un JPEG del instante en *todos* los eventos (historico visual).
 miniaturas: true

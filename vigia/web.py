@@ -1,23 +1,26 @@
-"""Dashboard web local de Vigia — fases 1-5 integradas.
+"""Dashboard web local de Vigia.
 
 Arranque: .venv\\Scripts\\python.exe -m vigia.web   →  http://localhost:8000
 
-- /            dashboard: video + estado + feed + historial + zonas
-- /video.mjpg  stream MJPEG con detecciones, IDs de personas y zonas
-- /estado      JSON: FPS, personas, objetos, estado de camara
-- /eventos     JSON: feed reciente en memoria
-- /historial   JSON: eventos de SQLite, filtrables (?tipo=, ?desde=, ?limite=)
-- /clip/{fichero}  sirve un mp4 guardado por el sistema
+- /             panel: video en vivo + linea del tiempo + historial + clips
+- /video.mjpg   stream MJPEG con detecciones, IDs de personas y zonas
+- /estado       JSON: FPS, personas, objetos, estado de camara
+- /eventos      JSON: feed reciente en memoria
+- /historial    JSON: eventos de SQLite, filtrables
+- /timeline     JSON: eventos de un dia o de una ventana de tiempo
+- /media/{f}    sirve un clip (.webm/.mp4) o una miniatura (.jpg)
+- /caras/...    registro de personas conocidas
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import threading
 import time
 from collections import deque
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -26,23 +29,24 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from .almacen import Almacen
-from .captura import Camara
+from .captura import Camara, detectar_camaras
 from .clips import GuardadorClips
-from .config import cargar_config
-from .actividades import EstabilizadorAct, clasificar as clasificar_actividad
-from .caras import CarasDetector
+from .analisis import ModuloActividades, ModuloCaras
+from .analisis import _iou, persona_de_pose as _persona_de_pose  # noqa: F401
+from .caras import embedding_valido
+from .clips import EXT_CLIP
+from .config import RAIZ, cargar_config, ruta_proyecto
 from .detector import Deteccion, Detector
 from .dibujo import dibujar, frame_aviso
 from .eventos import MotorEventos
 from .logs import configurar_logging
 from .mantener import mantener
 from .notificaciones import notificar
-from .pose import PoseDetector, dibujar_pose
 from .tracking import RastreadorPersonas
 
 log = logging.getLogger("vigia.web")
 
-VERSION = "0.7"
+VERSION = "0.8"
 
 _ESPERA_OK = 0.01
 _ESPERA_CAIDA = 2.0
@@ -53,17 +57,24 @@ _EVENTOS_GRANDES = {"persona_entra", "objeto_desaparece", "permanencia"}
 # tipos que ademas lanzan un aviso de Windows (evita spam al pasar gente)
 _AVISOS = {"permanencia", "objeto_desaparece"}
 
-_EXT_MEDIA = {".mp4": "video/mp4", ".jpg": "image/jpeg",
-              ".jpeg": "image/jpeg", ".png": "image/png"}
+_EXT_MEDIA = {".webm": "video/webm", ".mp4": "video/mp4",
+              ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".png": "image/png"}
 
 # fichero donde se persisten los ajustes del dashboard (los tests lo cambian)
-_RUTA_CONFIG = Path("config.yaml")
+_RUTA_CONFIG = RAIZ / "config.yaml"
+_persistir_lock = threading.Lock()
 
 _INICIO = time.monotonic()
 
-# cooldown para banner "cara nueva" (no spamear el feed)
-_CARA_NUEVA_CADA_SEG = 120.0
-_ULTIMA_CARA_NUEVA = {"t": 0.0}
+# lo que el bucle publica para las rutas web
+_actividades_personas: dict[int, str] = {}   # {id_tracking: actividad}
+_act_lock = threading.Lock()
+_ultima_cara: dict = {}                      # {emb, t, jpeg} de la cara mas grande
+_cara_lock = threading.Lock()
+_CARA_VIGENCIA_SEG = 5.0                     # una cara "vista" caduca pronto
+# el bucle recarga el registro de conocidos cuando la UI lo cambia
+bucle_caras_recarga = threading.Event()
 
 
 class Estado:
@@ -122,43 +133,6 @@ def _jpeg(frame) -> bytes:
     return buf.tobytes() if ok else b""
 
 
-def _iou(caja_a, caja_b) -> float:
-    ax1, ay1, ax2, ay2 = caja_a
-    bx1, by1, bx2, by2 = caja_b
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    if ix2 <= ix1 or iy2 <= iy1:
-        return 0.0
-    inter = (ix2 - ix1) * (iy2 - iy1)
-    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-
-def _persona_de_pose(caja, personas) -> int | None:
-    """Empareja la caja de una pose con la persona trackeada (mismo ID visual).
-
-    El modelo de pose usa su propio ByteTrack: sin este emparejamiento el #N
-    de /actividades no seria el mismo #N que se dibuja en el video.
-    """
-    mejor, mejor_iou = None, 0.0
-    for pid, caja_p in personas:
-        iou = _iou(caja, caja_p)
-        if iou > mejor_iou:
-            mejor, mejor_iou = pid, iou
-    if mejor is not None and mejor_iou >= 0.2:
-        return mejor
-    # respaldo: centro de la pose dentro de la caja de la persona
-    cx = (caja[0] + caja[2]) / 2
-    cy = (caja[1] + caja[3]) / 2
-    for pid, caja_p in personas:
-        if (caja_p[0] - 10 <= cx <= caja_p[2] + 10
-                and caja_p[1] - 10 <= cy <= caja_p[3] + 10):
-            return pid
-    return None
-
-
 def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
                    frame, tipo: str, detalle: str | None = "",
                    id_tracking: int | None = None,
@@ -192,6 +166,47 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
     return evento_id
 
 
+def _publicar_actividades(actuales: dict[int, str]) -> None:
+    with _act_lock:
+        _actividades_personas.clear()
+        _actividades_personas.update(actuales)
+
+
+def _publicar_cara(ficha: dict) -> None:
+    with _cara_lock:
+        _ultima_cara.clear()
+        _ultima_cara.update(ficha)
+
+
+def _conocidos(almacen: Almacen) -> dict[str, list[np.ndarray]]:
+    """Registro de caras: nombre -> todos sus embeddings (varias muestras)."""
+    conocidos: dict[str, list[np.ndarray]] = {}
+    for r in almacen.rostros():
+        try:
+            emb = embedding_valido(np.frombuffer(r["embedding"],
+                                                 dtype=np.float32))
+        except ValueError:
+            log.warning("rostro %r ignorado: embedding invalido", r["nombre"])
+            continue
+        conocidos.setdefault(r["nombre"], []).append(emb)
+    return conocidos
+
+
+def _aplicar_camara(cam, config: dict) -> None:
+    """Si el panel eligio otra webcam, cambia en caliente (y revierte si falla)."""
+    destino = config.get("camara", 0)
+    actual = getattr(cam, "fuente", destino)
+    if not hasattr(cam, "cambiar") or destino == actual:
+        return
+    if not cam.cambiar(destino):
+        config["camara"] = actual  # la nueva no abrio: el panel vuelve a la buena
+        if config is _config:      # y config.yaml no se queda con un indice roto
+            try:
+                _persistir_config({"camara": actual})
+            except OSError:
+                log.exception("no se pudo restaurar la camara en config.yaml")
+
+
 def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                         config: dict | None = None,
                         clips: GuardadorClips | None = None,
@@ -205,7 +220,8 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     if config is None:
         config = _config
     if cam is None:
-        cam = Camara(abrir=False, ancho=int(config.get("ancho", 640)),
+        cam = Camara(fuente=int(config.get("camara", 0)), abrir=False,
+                     ancho=int(config.get("ancho", 640)),
                      alto=int(config.get("alto", 480)))
     ancho = getattr(cam, "ancho", 640)
     alto = getattr(cam, "alto", 480)
@@ -216,7 +232,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
         except Exception:
             # sin modelo no hay nada que hacer: mejor avisar en el dashboard
             # que dejar el hilo muerto con la pantalla en negro
-            log.exception("No se pudo cargar el modelo YOLO (¿falta "
+            log.exception("No se pudo cargar el modelo YOLO (falta "
                           "yolo11n.pt o internet en el primer arranque?)")
             estado.actualizar(
                 _jpeg(frame_aviso("MODELO YOLO NO DISPONIBLE - revisa el log",
@@ -230,23 +246,23 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     if rastreador is None:
         rastreador = RastreadorPersonas(
             timeout_seg=float(config.get("timeout_persona_seg", 10)))
-    # caras (identidad): carga diferida; desactivacion permanente si falla
-    caras_det: CarasDetector | None = None
-    caras_fallo = False
-    identidades: dict[int, tuple[str, float]] = {}
-    pendiente: dict = {"emb": None, "cuando": 0.0, "imagen": None}
+
+    # pasos opcionales: cargan su modelo en segundo plano
+    mod_actividades = ModuloActividades()
+    mod_caras = ModuloCaras(
+        cargar_conocidos=lambda: _conocidos(almacen),
+        recarga=bucle_caras_recarga, al_ver_cara=_publicar_cara)
+
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
     ultimo_t = 0.0
     # la primera pasada de mantenimiento, tras el arranque
     proximo_mantenimiento = time.monotonic() + 60 * int(
         config.get("mantener_cada_min", 60) or 60)
-    # carga diferida del modelo de pose (segunda descarga en el primer arranque:
-    # si falla, seguimos sin pose y avisamos en el log una sola vez)
-    pose_det: PoseDetector | None = None
-    pose_fallo = False
-    actividades: dict[int, EstabilizadorAct] = {}
-    ultima_actividad: dict[int, float] = {}
+
+    def anotar(frame, tipo, detalle="", id_tracking=None):
+        _anotar_evento(estado, almacen, clips, config, frame, tipo, detalle,
+                       id_tracking=id_tracking)
 
     while not (parar and parar.is_set()):
         t0 = time.perf_counter()
@@ -258,6 +274,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 fps_ultimo = sum(fps_hist) / len(fps_hist)
         ultimo_t = t0
         try:
+            _aplicar_camara(cam, config)
             ok, frame = cam.leer()
             if not ok:
                 estado.actualizar(
@@ -275,12 +292,11 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                     clips.meter(frame)
                 ids_persona = {ids_idx[i] for i, d in enumerate(dets)
                                if d.es_persona and i in ids_idx}
+                fuera = motor.fuera_de_franja()
                 for tipo, pid in rastreador.actualizar(ids_persona):
                     # coherencia: entra/sale tambien respeta las franjas
-                    if motor.fuera_de_franja():
-                        continue
-                    _anotar_evento(estado, almacen, clips, config, frame,
-                                   tipo, f"id {pid}", id_tracking=pid)
+                    if not fuera:
+                        anotar(frame, tipo, f"id {pid}", pid)
                 mapa_ids = {ids_idx[i]: d.caja for i, d in enumerate(dets)
                             if d.es_persona and i in ids_idx}
                 extras = [d for d in dets if not d.es_persona]
@@ -288,118 +304,33 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                     _anotar_evento(estado, almacen, clips, config, frame,
                                    ev.tipo, ev.detalle, evento_id=ev.id)
 
-                # actividades: segunda pasada de pose + clasificacion por persona
-                # (se lee la config en cada frame: el interruptor del panel
-                # funciona sin reiniciar)
-                act_on = bool(config.get("actividades", False))
-                if not act_on:
-                    pose_fallo = False  # permitir reintento si se reactiva
-                    if actividades:
-                        actividades.clear()
-                        ultima_actividad.clear()
-                        with _act_lock:
-                            _actividades_personas.clear()
-                if act_on and pose_det is None and not pose_fallo:
+                # los interruptores del panel se leen en cada frame: funcionan
+                # sin reiniciar
+                if config.get("actividades", False):
                     try:
-                        pose_det = PoseDetector()
-                    except Exception:
-                        pose_fallo = True  # no insistir (p.ej. sin red)
-                        log.warning("modelo de pose no disponible; "
-                                    "actividades desactivadas")
-                if act_on and pose_det is not None:
-                    try:
-                        poses = pose_det.detectar(frame)
-                        personas = [(pid, caja) for pid, caja in mapa_ids.items()]
-                        ahora_act = time.time()
-                        vistos = set()
-                        for p in poses:
-                            pid = _persona_de_pose(p.caja, personas)
-                            if pid is None:
-                                continue
-                            act = clasificar_actividad(p, extras)
-                            est = actividades.get(pid)
-                            if est is None:
-                                est = EstabilizadorAct()
-                                actividades[pid] = est
-                            ultima_actividad[pid] = ahora_act
-                            anuncio = est.tick(act, ahora_act)
-                            if anuncio and not motor.fuera_de_franja():
-                                _anotar_evento(
-                                    estado, almacen, clips, config, frame,
-                                    "actividad", f"id {pid} {anuncio}",
-                                    id_tracking=pid)
-                            vistos.add(pid)
-                        # gracia de 5 s: un frame sin pose no borra la actividad
-                        for pid in list(actividades):
-                            if pid not in vistos and (
-                                    ahora_act - ultima_actividad.get(pid, 0)
-                                    > 5.0):
-                                del actividades[pid]
-                                ultima_actividad.pop(pid, None)
-                        dibujar_pose(frame, poses)
-                        # publicar para /actividades (con cerrojo: lo lee la web)
-                        with _act_lock:
-                            _actividades_personas.clear()
-                            for pid, est in actividades.items():
-                                _actividades_personas[pid] = est.actual
+                        res = mod_actividades.procesar(frame, mapa_ids, extras)
+                        if res is not None:
+                            actuales, anuncios = res
+                            for pid, texto in anuncios:
+                                if not fuera:
+                                    anotar(frame, "actividad",
+                                           f"id {pid} {texto}", pid)
+                            _publicar_actividades(actuales)
                     except Exception:
                         log.exception("error en pose/actividades (se sigue)")
+                elif mod_actividades.apagar():
+                    _publicar_actividades({})
 
-                # caras: identidad por persona (YuNet + SFace, local)
-                caras_on = bool(config.get("caras", False))
-                if not caras_on:
-                    caras_fallo = False
-                if caras_on and caras_det is None and not caras_fallo:
+                if config.get("caras", False):
                     try:
-                        caras_det = CarasDetector()
-                        caras_det.set_conocidos({
-                            r["nombre"]:
-                                np.frombuffer(r["embedding"], dtype=np.float32)
-                            for r in almacen.rostros()})
-                        caras_det.recargar = False
-                    except Exception:
-                        caras_fallo = True
-                        log.warning("caras desactivadas: modelos no disponibles")
-                if caras_on and caras_det is not None:
-                    try:
-                        # la UI pudo cambiar el registro: recargar conocidos
-                        if bucle_caras_recarga.is_set():
-                            bucle_caras_recarga.clear()
-                            caras_det.set_conocidos({
-                                r["nombre"]:
-                                    np.frombuffer(r["embedding"],
-                                                  dtype=np.float32)
-                                for r in almacen.rostros()})
-                        for cara in caras_det.detectar(frame):
-                            x1, y1, x2, y2 = cara["caja"]
-                            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                            # cara -> persona: centro de la cara dentro de su caja
-                            pid_asoc = None
-                            for pid, caja in mapa_ids.items():
-                                if (caja[0] - 10 <= cx <= caja[2] + 10
-                                        and caja[1] - 10 <= cy <= caja[3] + 10):
-                                    pid_asoc = pid
-                                    break
-                            if pid_asoc is None:
-                                continue
-                            nombre, sim = caras_det.identificar(cara["emb"])
-                            identidades[pid_asoc] = (nombre, sim)
-                            if nombre is not None:
-                                cv2.putText(frame, f"{nombre} {sim:.0%}",
-                                            (x1, y1 - 6),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                                            (80, 220, 120), 2, cv2.LINE_AA)
-                            elif cara["conf"] >= 0.7 and \
-                                    time.time() - _ULTIMA_CARA_NUEVA["t"] \
-                                    >= _CARA_NUEVA_CADA_SEG:
-                                _ULTIMA_CARA_NUEVA["t"] = time.time()
-                                _anotar_evento(
-                                    estado, almacen, clips, config, frame,
-                                    "cara_desconocida",
-                                    f"id {pid_asoc} sin identificar",
-                                    id_tracking=pid_asoc)
+                        for tipo, detalle, pid in (
+                                mod_caras.procesar(frame, mapa_ids) or []):
+                            if not fuera:
+                                anotar(frame, tipo, detalle, pid)
                     except Exception:
                         log.exception("error en caras (se sigue)")
+                else:
+                    mod_caras.apagar()
 
                 ids_dentro = rastreador.ids_dentro()
                 # leer las zonas del motor en cada frame: el editor las cambia
@@ -436,11 +367,11 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 app = FastAPI(title="Vigia")
 estado = Estado()
 _config = cargar_config()
-_almacen = Almacen(_config.get("almacen", "vigia.db"))
+_almacen = Almacen(ruta_proyecto(_config.get("almacen", "vigia.db")))
 # se crea siempre: el buffer solo se llena con guardar_clips=true, pero los
 # endpoints /clips y /media siguen sirviendo lo que ya hay en disco y el
 # interruptor del panel funciona en caliente
-_clips = GuardadorClips(fps_salida=10.0)
+_clips = GuardadorClips(carpeta=RAIZ / "clips", fps_salida=10.0)
 # compartidos para poder aplicar los ajustes del dashboard en caliente
 _motor_compartido = MotorEventos(_almacen, config=_config)
 _rastreador_compartido = RastreadorPersonas(
@@ -461,8 +392,6 @@ def _leer_panel() -> str:
         log.warning("no se encontro %s; se sirve el panel minimo", _RUTA_PANEL)
         return _PAGINA_MINIMA
 
-
-_PAGINA = _leer_panel()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -495,8 +424,31 @@ def estado_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
     _, fps, dets, ids_persona, ok = estado.snapshot()
     return {"fps": fps, "camara_ok": ok, "personas": len(ids_persona),
+            "ids": sorted(ids_persona),
             "objetos": sum(1 for d in dets if not d.es_persona),
             "ancho": estado.ancho, "alto": estado.alto}
+
+
+_camaras_cache: dict = {"t": 0.0, "datos": []}
+_CAMARAS_VIGENCIA_SEG = 30.0
+_camaras_lock = threading.Lock()
+
+
+@app.get("/camaras")
+def camaras_json(response: Response, refrescar: bool = False) -> dict:
+    """Webcams disponibles y la que esta en uso (el sondeo tarda ~1 s: se cachea)."""
+    response.headers["Cache-Control"] = "no-store"
+    actual = int(_config.get("camara", 0))
+    with _camaras_lock:
+        vieja = time.monotonic() - _camaras_cache["t"] > _CAMARAS_VIGENCIA_SEG
+        if refrescar or vieja or not _camaras_cache["datos"]:
+            _camaras_cache["datos"] = detectar_camaras(ocupada=actual)
+            _camaras_cache["t"] = time.monotonic()
+        datos = list(_camaras_cache["datos"])
+    if actual not in {c["indice"] for c in datos}:
+        datos.append({"indice": actual, "disponible": False})
+    return {"actual": actual, "camaras": sorted(datos,
+                                                key=lambda c: c["indice"])}
 
 
 @app.get("/snapshot.jpg")
@@ -531,8 +483,8 @@ def clip(fichero: str):
         raise HTTPException(404, "clips desactivados")
     carpeta = _clips.carpeta.resolve()
     ruta = (carpeta / fichero).resolve()
-    if (ruta.parent != carpeta or ruta.suffix.lower() != ".mp4"
-            or not ruta.is_file()):
+    if (ruta.parent != carpeta or ruta.suffix.lower() not in EXT_CLIP
+            or not ruta.is_file() or ruta.name.startswith("~")):
         raise HTTPException(404, "clip no encontrado")
     return FileResponse(ruta, media_type="video/mp4")
 
@@ -553,15 +505,30 @@ def media(fichero: str):
     carpeta = _clips.carpeta.resolve()
     ruta = (carpeta / fichero).resolve()
     tipo = _EXT_MEDIA.get(ruta.suffix.lower())
-    if ruta.parent != carpeta or tipo is None or not ruta.is_file():
+    if (ruta.parent != carpeta or tipo is None or not ruta.is_file()
+            or ruta.name.startswith("~")):
         raise HTTPException(404, "fichero no encontrado")
     return FileResponse(ruta, media_type=tipo)
 
 
 @app.get("/timeline")
 def timeline_json(response: Response, dia: str | None = None,
-                  limite: int = 2000) -> dict:
+                  desde: str | None = None, hasta: str | None = None,
+                  limite: int = 5000) -> dict:
+    """Eventos de un dia (`?dia=`) o de una ventana (`?desde=&hasta=`,
+    `YYYY-MM-DD HH:MM:SS`). Sin parametros: hoy."""
     response.headers["Cache-Control"] = "no-store"
+    if desde or hasta:
+        try:
+            d = datetime.strptime(desde or "", "%Y-%m-%d %H:%M:%S")
+            h = datetime.strptime(hasta or "", "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise HTTPException(400, "desde/hasta: AAAA-MM-DD HH:MM:SS")
+        if h <= d or h - d > timedelta(days=8):
+            raise HTTPException(400, "ventana invalida (maximo 8 dias)")
+        eventos = _almacen.eventos_entre(desde, hasta, limite=limite)
+        return {"desde": desde, "hasta": hasta, "total": len(eventos),
+                "eventos": eventos}
     dia = dia or date.today().isoformat()
     eventos = _almacen.eventos_del_dia(dia, limite=limite)
     return {"dia": dia, "total": len(eventos), "eventos": eventos}
@@ -612,10 +579,7 @@ def zonas_json(response: Response) -> dict:
 @app.put("/zonas")
 async def zonas_guardar(datos: dict) -> dict:
     """Zonas desde el editor visual: se aplican en caliente y se persisten."""
-    try:
-        return await config_guardar({"zonas": (datos or {}).get("zonas", {})})
-    except HTTPException as e:
-        return {"ok": False, "error": e.detail}
+    return await config_guardar({"zonas": (datos or {}).get("zonas", {})})
 
 
 @app.get("/actividades")
@@ -626,12 +590,15 @@ def actividades_json(response: Response) -> dict:
         return dict(_actividades_personas)
 
 
-# publicacion del hilo -> endpoint: {pid: actividad string}
-_actividades_personas: dict[int, str] = {}
-_act_lock = threading.Lock()
+# -- registro de caras ---------------------------------------------------------
+def _cara_vigente() -> dict | None:
+    with _cara_lock:
+        ficha = dict(_ultima_cara)
+    if not ficha or time.time() - ficha.get("t", 0.0) > _CARA_VIGENCIA_SEG:
+        return None
+    return ficha
 
 
-# -- registro de caras (fase 7) ------------------------------------------------
 @app.get("/caras/registro")
 def caras_registro(response: Response) -> list[dict]:
     """Personas conocidas: id y nombre (los embeddings no se exponen)."""
@@ -640,31 +607,64 @@ def caras_registro(response: Response) -> list[dict]:
             for r in _almacen.rostros()]
 
 
+@app.get("/caras/ultima")
+def caras_ultima(response: Response) -> dict:
+    """¿Hay una cara a la vista ahora mismo que se pueda registrar?"""
+    response.headers["Cache-Control"] = "no-store"
+    return {"disponible": _cara_vigente() is not None}
+
+
+@app.get("/caras/ultima.jpg")
+def caras_ultima_jpg() -> Response:
+    """Recorte de la cara que se registraria (para confirmarla a ojo)."""
+    ficha = _cara_vigente()
+    if not ficha or not ficha.get("jpeg"):
+        raise HTTPException(404, "no hay ninguna cara a la vista")
+    return Response(content=ficha["jpeg"], media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+def _nombre_valido(datos: dict) -> str:
+    nombre = str(datos.get("nombre", "")).strip()
+    if not nombre:
+        raise HTTPException(400, "falta el nombre")
+    if len(nombre) > 60:
+        raise HTTPException(400, "nombre demasiado largo (maximo 60)")
+    return nombre
+
+
 @app.post("/caras/registro")
 async def caras_registrar(datos: dict) -> dict:
     """Registra o renombra a una persona conocida.
 
-    {nombre, embedding: [float...]} -> registra nueva identidad
-    {nombre, id}                    -> renombra la entrada id
+    {nombre, embedding: [128 floats]} -> registra una muestra nueva
+    {nombre, id}                      -> renombra la entrada id
+    {nombre, capturar: true}          -> registra la cara que se ve ahora
     """
     datos = datos or {}
-    nombre = str(datos.get("nombre", "")).strip()
-    if not nombre:
-        raise HTTPException(400, "falta el nombre")
+    nombre = _nombre_valido(datos)
     if datos.get("id") is not None:
-        id_entrada = int(datos["id"])
-        existentes = {r["id"]: r for r in _almacen.rostros()}
-        if id_entrada not in existentes:
+        try:
+            id_entrada = int(datos["id"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "id invalido")
+        if not _almacen.renombrar_rostro(id_entrada, nombre):
             raise HTTPException(404, "entrada no encontrada")
-        _almacen.guardar_rostro(
-            nombre, bytes(existentes[id_entrada]["embedding"]))
-        _almacen.borrar_rostro(id_entrada)
+    elif datos.get("capturar"):
+        ficha = _cara_vigente()
+        if ficha is None:
+            raise HTTPException(
+                409, "no se ve ninguna cara: ponte frente a la camara")
+        _almacen.guardar_rostro(nombre, ficha["emb"].tobytes())
     elif datos.get("embedding") is not None:
-        emb = np.asarray(datos["embedding"], dtype=np.float32)
+        try:
+            emb = embedding_valido(datos["embedding"])
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         _almacen.guardar_rostro(nombre, emb.tobytes())
     else:
-        raise HTTPException(400, "falta 'embedding' o 'id'")
-    _marcar_recarga_caras()
+        raise HTTPException(400, "falta 'embedding', 'capturar' o 'id'")
+    bucle_caras_recarga.set()
     return {"ok": True}
 
 
@@ -672,28 +672,19 @@ async def caras_registrar(datos: dict) -> dict:
 def caras_borrar(id_entrada: int) -> dict:
     if not _almacen.borrar_rostro(id_entrada):
         raise HTTPException(404, "entrada no encontrada")
-    _marcar_recarga_caras()
+    bucle_caras_recarga.set()
     return {"ok": True}
 
 
-def _marcar_recarga_caras() -> None:
-    """El bucle recarga el registro de conocidos en el siguiente frame."""
-    bucle_caras_recarga.set()
-
-
-# evento del bucle: recargar conocidos (se consulta con getattr si el hilo
-# corrio antes de que existiera esta variable)
-bucle_caras_recarga = threading.Event()
-
-
 # -- ajustes ------------------------------------------------------------------
-_AJUSTES_NUM = ("permanencia_seg", "timeout_objeto_seg", "timeout_persona_seg",
+_AJUSTES_NUM = ("camara", "permanencia_seg", "timeout_objeto_seg", "timeout_persona_seg",
                 "ancho", "alto", "retencion_dias", "retencion_clips_dias",
                 "retencion_clips_mb", "mantener_cada_min")
 _RANGOS = {
     "permanencia_seg": (1, 3600),
     "timeout_objeto_seg": (1, 3600),
     "timeout_persona_seg": (1, 3600),
+    "camara": (0, 9),
     "ancho": (160, 3840),
     "alto": (120, 2160),
     "retencion_dias": (0, 3650),
@@ -746,6 +737,11 @@ def _linea_yaml(clave: str, valor) -> str:
 
 def _persistir_config(cambios: dict) -> None:
     """Actualiza solo las claves cambiadas, conservando comentarios y orden."""
+    with _persistir_lock:
+        _persistir_config_sin_lock(cambios)
+
+
+def _persistir_config_sin_lock(cambios: dict) -> None:
     ruta = Path(_RUTA_CONFIG)
     try:
         texto = ruta.read_text(encoding="utf-8")
@@ -772,7 +768,10 @@ def _persistir_config(cambios: dict) -> None:
                 continue
             break
         lineas[indice:fin] = nuevas
-    ruta.write_text("\n".join(lineas).rstrip("\n") + "\n", encoding="utf-8")
+    # escritura atomica: un corte a medias no deja el YAML truncado
+    tmp = ruta.with_name(ruta.name + ".tmp")
+    tmp.write_text("\n".join(lineas).rstrip("\n") + "\n", encoding="utf-8")
+    os.replace(tmp, ruta)
 
 
 @app.post("/config")
@@ -872,7 +871,9 @@ def main() -> None:
     hilo.start()
     log.info("Dashboard en http://%s:%d", host, puerto)
     try:
-        uvicorn.run(app, host=host, port=puerto, log_level="warning")
+        # los streams MJPEG nunca terminan solos: sin limite, Ctrl+C se cuelga
+        uvicorn.run(app, host=host, port=puerto, log_level="warning",
+                    timeout_graceful_shutdown=3)
     finally:
         # parar el bucle antes de cerrar la BD: si no, el hilo sigue
         # escribiendo sobre una conexion cerrada hasta que muere el proceso

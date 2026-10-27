@@ -11,11 +11,11 @@ import time
 from pathlib import Path
 
 from .almacen import Almacen
-from .config import cargar_config
+from .config import RAIZ, cargar_config, ruta_proyecto
 
 log = logging.getLogger(__name__)
 
-_EXTENSIONES = {".mp4", ".jpg", ".jpeg"}
+_EXTENSIONES = {".mp4", ".webm", ".jpg", ".jpeg"}
 
 
 def purgar_media(carpeta: str | Path, dias: int = 0,
@@ -35,7 +35,8 @@ def purgar_media(carpeta: str | Path, dias: int = 0,
     info: list[tuple[Path, float, int]] = []
     try:
         for p in raiz.iterdir():
-            if not p.is_file() or p.suffix.lower() not in _EXTENSIONES:
+            if (not p.is_file() or p.suffix.lower() not in _EXTENSIONES
+                    or p.name.startswith("~")):  # "~": clip a medio escribir
                 continue
             try:
                 st = p.stat()
@@ -104,15 +105,25 @@ def mantener(almacen: Almacen, clips=None, config: dict | None = None) -> dict:
     return resumen
 
 
+def convertir_clips(almacen: Almacen, clips) -> int:
+    """Pasa los clips .mp4 antiguos a WebM y actualiza el historial."""
+    hechos = clips.convertir_antiguos()
+    for viejo, nuevo in hechos.items():
+        almacen.renombrar_clip(viejo, nuevo)
+    return len(hechos)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Purga eventos y clips viejos")
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default=str(RAIZ / "config.yaml"))
     parser.add_argument("--eventos", type=int, default=None,
                         help="dias de eventos a conservar (por defecto: config)")
     parser.add_argument("--media", type=int, default=None,
                         help="dias de clips/jpg a conservar (por defecto: config)")
+    parser.add_argument("--convertir", action="store_true",
+                        help="recodifica los .mp4 antiguos a WebM (reproducible)")
     args = parser.parse_args()
 
     cfg = cargar_config(args.config)
@@ -123,9 +134,11 @@ def main() -> None:
 
     from .clips import GuardadorClips
 
-    almacen = Almacen(cfg.get("almacen", "vigia.db"))
-    clips = GuardadorClips(carpeta="clips")
+    almacen = Almacen(ruta_proyecto(cfg.get("almacen", "vigia.db")))
+    clips = GuardadorClips(carpeta=RAIZ / "clips")
     try:
+        if args.convertir:
+            print(f"convertidos: {convertir_clips(almacen, clips)}")
         resumen = mantener(almacen, clips, cfg)
         print(f"mantenimiento: {resumen}")
     finally:
