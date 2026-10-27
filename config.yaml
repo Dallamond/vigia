@@ -31,3 +31,7 @@ timeout_objeto_seg: 10
 # Fase 5
 guardar_clips: true    # clip ±5s al disparar un evento relevante
 notificar: true        # toast de Windows al disparar un evento relevante
+
+# Actividades por persona (usar PC, movil, dormir, sentarse...)
+# Necesita el modelo pose (se descarga la primera vez, ~6 MB y algunos seg)
+actividades: true

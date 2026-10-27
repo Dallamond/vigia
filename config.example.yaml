@@ -33,3 +33,6 @@ franjas: []
 # Extras (fase 5). Desactivados = menos CPU/disco.
 guardar_clips: true
 notificar: true
+# Actividades por persona (usar PC, movil, dormir, sentarse...).
+# Requiere descargar el modelo pose (~6 MB) la primera vez.
+actividades: true

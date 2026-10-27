@@ -23,6 +23,9 @@ DEFAULTS = {
     "franjas": [],
     "guardar_clips": True,
     "notificar": True,
+    # actividades requiere el modelo de pose (descarga extra en primer uso):
+    # off por defecto para tests y arranque ligero; se activa en config.yaml
+    "actividades": False,
 }
 
 _HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -138,4 +141,9 @@ def cargar_config(ruta: str | Path = "config.yaml") -> dict:
         cfg["guardar_clips"], DEFAULTS["guardar_clips"], "guardar_clips")
     cfg["notificar"] = _booleano(
         cfg["notificar"], DEFAULTS["notificar"], "notificar")
+    if "actividades" not in cfg:
+        cfg["actividades"] = DEFAULTS.get("actividades", False)
+    cfg["actividades"] = _booleano(
+        cfg["actividades"], DEFAULTS.get("actividades", False),
+        "actividades")
     return cfg

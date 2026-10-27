@@ -24,10 +24,12 @@ from .almacen import Almacen
 from .captura import Camara
 from .clips import GuardadorClips
 from .config import cargar_config
+from .actividades import EstabilizadorAct, clasificar as clasificar_actividad
 from .detector import Deteccion, Detector
 from .dibujo import dibujar, frame_aviso
 from .eventos import MotorEventos
 from .notificaciones import notificar
+from .pose import PoseDetector, dibujar_pose
 from .tracking import RastreadorPersonas
 
 log = logging.getLogger("vigia.web")
@@ -132,6 +134,11 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     zonas = motor.zonas
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
+    # carga diferida del modelo de pose (segunda descarga en el primer arranque:
+    # si falla, seguimos sin pose y avisamos en el log una sola vez)
+    pose_det: PoseDetector | None = None
+    pose_exploro = config.get("actividades", True)
+    actividades: dict[int, EstabilizadorAct] = {}
 
     while not (parar and parar.is_set()):
         t0 = time.perf_counter()
@@ -165,6 +172,43 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                             clips.guardar(ev.tipo)
                         if config.get("notificar", True):
                             notificar(f"Vigia: {ev.tipo}", ev.detalle or "")
+
+                # actividades: segunda pasada de pose + clasificacion por persona
+                if pose_exploro and pose_det is None:
+                    try:
+                        pose_det = PoseDetector()
+                    except Exception:
+                        pose_exploro = False  # no insistir (p.ej. sin red)
+                        log.warning("modelo de pose no disponible; "
+                                    "desactivando actividades")
+                if pose_det is not None:
+                    try:
+                        poses = pose_det.detectar(frame)
+                        vistos = set()
+                        for p in poses:
+                            act = clasificar_actividad(p, extras)
+                            est = actividades.get(p.track_id)
+                            if est is None:
+                                est = EstabilizadorAct()
+                                actividades[p.track_id] = est
+                            anuncio = est.tick(act, time.time())
+                            if anuncio:
+                                almacen.guardar("actividad",
+                                                id_tracking=p.track_id,
+                                                detalle=anuncio)
+                                estado.anadir_evento(
+                                    "actividad", f"id {p.track_id} {anuncio}")
+                            vistos.add(p.track_id)
+                        for pid in list(actividades):
+                            if pid not in vistos:
+                                del actividades[pid]
+                        dibujar_pose(frame, poses)
+                        # publicar para /actividades
+                        _actividades_personas.clear()
+                        for pid, est in actividades.items():
+                            _actividades_personas[pid] = est.actual
+                    except Exception:
+                        log.exception("error en pose/actividades (se sigue)")
 
                 dt = time.perf_counter() - t0
                 fps_hist.append(1.0 / dt if dt > 0 else 0.0)
@@ -448,11 +492,12 @@ def clips_json(response: Response) -> list[dict]:
 def actividades_json(response: Response) -> dict:
     """Mapa id_tracking -> actividad actual (usando PC, durmiendo...)."""
     response.headers["Cache-Control"] = "no-store"
-    return dict(_actividades_personas)
+    with estado.cerradura:
+        return dict(_actividades_personas)
 
 
-# estado de actividades por id de tracking: {pid: {"actividad":..., "desde":..., "anunciada":...}}
-_actividades_personas: dict[int, dict] = {}
+# publicacion del hilo -> endpoint: {pid: actividad string}
+_actividades_personas: dict[int, str] = {}
 
 
 # -- ajustes ------------------------------------------------------------------
