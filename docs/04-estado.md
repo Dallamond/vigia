@@ -26,8 +26,10 @@
 | 1 — Base (captura + YOLO en vivo) | hecha | 16 FPS, GPU 60fps, CAP_DSHOW+MJPG |
 | 2 — Tracking de personas | hecha | ByteTrack + eventos entra/sale + presencia |
 | 3 — Motor de eventos | hecha | permanencia, zonas, franjas, objetos → SQLite |
-| 4 — Dashboard web | hecha | /historial filtros, /eventos, zonas dibujadas |
-| 5 — Extras + futura base de escalada | hecha (escalada no) | clips ±5s MP4 + toast Windows |
+| 4 — Dashboard web | hecha | layout 2 columnas, historial filtrable, clips listados, ajustes ⚙ |
+| 5 — Extras | hecha | clips ±5s MP4 (poda max 60) + toast Windows |
+| 6 — Actividades | hecha | pose 17 kpts + clasificador estable (5 actividades) |
+| 7 — Caras + registro de conocidos | aprobada, no_empezada | insightface/DeepFace + tabla personas + modal de identidad |
 
 ## Registro de cambios
 
@@ -40,6 +42,7 @@
 | 2026-10-27 | FASES 2-5 IMPLEMENTADAS: tracking (tests ✅), motor de eventos (permanencia/zonas/franjas/objetos + SQLite `almacen.py`, tests ✅), dashboard completo (/historial, /eventos, /estado, /clip/...), clips ±5s MP4 (`clips.py`) + toast Windows (`notificaciones.py`). Integración con test_web.py de la otra terminal adaptada. 42/42 tests verdes. Push por fase: v1, y commit fases 2-5. |
 | 2026-10-27 | Auditoria paralela integrada: 64/64. Ronda A push `e960675`: UI 2 columnas (video izq / paneles der) + parte inferior reservada (actividades) + ajustes en caliente via ⚙ menú (/config POST → config.yaml) + /clips con poda (max 60) + franjas coherentes en entra/sale + MJPEG compartido con Condition (sin hilo de sondeo por cliente) + borrado motor.py (duplicado) + arreglo de encoding en pose.py. |
 | 2026-10-27 | Ronda B push: `pose.py` (YOLO11n-pose con seguimiento) + `actividades.py` (durmiendo/ sentado/ de pie/ usando movil/ usando PC con Estabilizador de 3 s, 7 tests). Bucle integra pose con carga diferida y desactivación automática si el modelo falla. /actividades JSON + parte inferior muestra "persona #N: actividad". 71/71. |
+| 2026-10-27 | Verificación en vivo: servidor arriba en :8000; smoke test de endpoints OK (config con actividades=true; /actividades con persona #1; /clips 6 mp4 de permanencia ya guardados y listados). Suite estable 71/71. Repo sincronizado (main = `ad59047`). Fase 7 (caras + registro de conocidos) aprobada como siguiente. |
 
 ## Datos técnicos acumulados
 
