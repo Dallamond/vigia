@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vigia</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#0b0f14;
+    --bg2:#0e141b;
+    --card:#121a23;
+    --card2:#16202b;
+    --line:#1f2c3a;
+    --line2:#2a3b4e;
+    --txt:#e6edf5;
+    --mute:#8ba0b5;
+    --accent:#4ade80;
+    --accent2:#38bdf8;
+    --warn:#fbbf24;
+    --bad:#f87171;
+    --violet:#a78bfa;
+    --r:14px;
+    --vw:min(100%,980px);
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:
+      radial-gradient(1200px 600px at 15% -10%, #12202e 0%, transparent 60%),
+      radial-gradient(900px 500px at 110% 10%, #10231d 0%, transparent 55%),
+      var(--bg);
+    color:var(--txt);
+    font:15px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
+  }
+  button,input,select,textarea{font:inherit;color:inherit}
+  a{color:var(--accent2)}
+  .top{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:14px 22px;position:sticky;top:0;z-index:20;
+    backdrop-filter:blur(10px);
+    background:linear-gradient(180deg,rgba(11,15,20,.92),rgba(11,15,20,.7));
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:baseline;gap:10px;font-weight:700;font-size:1.25rem;letter-spacing:.2px}
+  .brand .sub{font-size:.75rem;font-weight:500;color:var(--mute);letter-spacing:.16em;text-transform:uppercase}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+  .pill{
+    display:inline-flex;align-items:center;gap:7px;
+    background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:5px 12px;font-size:.82rem;color:var(--mute);white-space:nowrap;
+  }
+  .pill b{color:var(--txt);font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--mute);box-shadow:0 0 0 3px rgba(255,255,255,.03)}
+  .dot.ok{background:var(--accent)}
+  .dot.bad{background:var(--bad)}
+  .actions{display:flex;gap:8px}
+  .btn{
+    background:var(--card2);border:1px solid var(--line2);border-radius:10px;
+    padding:8px 14px;cursor:pointer;transition:.15s transform,.15s background;
+  }
+  .btn:hover{background:#1d2a38}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:#173d2b;border-color:#256b47;color:#c9f7dd}
+  .btn.primary:hover{background:#1b4a34}
+  .btn.ghost{background:transparent}
+  .btn.danger{background:#3a1b1b;border-color:#6b2525;color:#ffd0d0}
+  .btn.sm{padding:4px 10px;font-size:.8rem;border-radius:8px}
+
+  .layout{
+    display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,.9fr);
+    gap:16px;padding:16px 22px 28px;align-items:start;
+  }
+  @media (max-width:1000px){ .layout{grid-template-columns:1fr} }
+  /* XL / ancho: el video manda y el panel pasa debajo */
+  body.wide .layout{grid-template-columns:1fr}
+  .col{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .card{
+    background:linear-gradient(180deg,var(--card),var(--bg2));
+    border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+    overflow:hidden;min-width:0;
+  }
+  .card-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .card-head h2{margin:0;font-size:.86rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600}
+  .chip{margin-left:auto;font-size:.75rem;color:var(--mute);background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+
+  .video-card{display:flex;flex-direction:column;align-items:center;padding-bottom:10px}
+  .video-toolbar{
+    width:100%;display:flex;align-items:center;gap:10px;padding:10px 14px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap;
+  }
+  .seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{
+    background:transparent;border:0;padding:6px 12px;cursor:pointer;color:var(--mute);
+    font-size:.8rem;border-right:1px solid var(--line);
+  }
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:#1b2a3a;color:var(--txt)}
+  .hint{font-size:.78rem;color:var(--mute);margin-left:auto}
+  .stage{width:100%;display:flex;justify-content:center;padding:14px}
+  .stage img{
+    width:var(--vw);max-width:100%;height:auto;display:block;border-radius:10px;
+    border:1px solid var(--line2);background:#05080b;
+  }
+  .stage.offline img{opacity:.25;filter:grayscale(1)}
+  .stage{position:relative}
+  .stage .offline-tag{
+    position:absolute;inset:auto 0 26px 0;text-align:center;color:var(--bad);
+    font-weight:600;letter-spacing:.08em;display:none;
+  }
+  .stage.offline .offline-tag{display:block}
+  .health{
+    width:100%;display:flex;gap:14px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--line);
+    font-size:.76rem;color:var(--mute);
+  }
+  .health b{color:var(--txt);font-weight:600}
+
+  .feed{max-height:300px;overflow:auto;padding:8px 10px}
+  .ev{
+    display:flex;gap:10px;align-items:flex-start;padding:8px 10px;margin:6px 0;
+    background:#0f1720;border:1px solid var(--line);border-left:3px solid var(--line2);
+    border-radius:10px;cursor:pointer;
+  }
+  .ev:hover{background:#121d28}
+  .ev .t{color:var(--mute);font-variant-numeric:tabular-nums;font-size:.78rem;padding-top:2px}
+  .ev .n{flex:1;min-width:0}
+  .ev .n b{display:block;font-size:.86rem;font-weight:600}
+  .ev .n small{color:var(--mute);font-size:.76rem}
+  .ev .thumb{width:54px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--line2);background:#05080b}
+  .ev.entra{border-left-color:var(--accent)}
+  .ev.salio{border-left-color:var(--bad)}
+  .ev.aviso{border-left-color:var(--warn)}
+  .ev.act{border-left-color:var(--violet)}
+  .empty{color:var(--mute);font-size:.85rem;padding:10px}
+
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs button{
+    flex:1;background:transparent;border:0;border-bottom:2px solid transparent;
+    padding:11px 8px;cursor:pointer;color:var(--mute);font-size:.82rem;letter-spacing:.04em;
+  }
+  .tabs button.on{color:var(--txt);border-bottom-color:var(--accent2)}
+  .tab{padding:10px 12px}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .filters select,.filters input{
+    background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:.82rem;
+  }
+  .rows{max-height:330px;overflow:auto}
+  .row{
+    display:flex;gap:10px;align-items:center;padding:7px 8px;margin:5px 0;
+    background:#0f1720;border:1px solid var(--line);border-radius:9px;cursor:pointer;
+  }
+  .row:hover{background:#121d28}
+  .row .thumb{width:64px;height:44px;object-fit:cover;border-radius:5px;border:1px solid var(--line2);background:#05080b}
+  .row .g{flex:1;min-width:0}
+  .row .g b{font-size:.84rem;font-weight:600}
+  .row .g small{display:block;color:var(--mute);font-size:.74rem}
+  .tag{font-size:.7rem;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);color:var(--mute)}
+  .tag.persona_entra{color:#bbf7d0;border-color:#256b47}
+  .tag.persona_salio{color:#fecaca;border-color:#6b2525}
+  .tag.permanencia{color:#fde68a;border-color:#6b5a1f}
+  .tag.actividad{color:#ddd6fe;border-color:#4c3f8a}
+  .tag.objeto_desaparece,.tag.objeto_aparece{color:#bae6fd;border-color:#1e5f7a}
+
+  .tl-head{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .tl{position:relative;height:54px;background:#0c131b;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .tl .hour{position:absolute;top:0;bottom:0;width:1px;background:#1a2733}
+  .tl .hour span{position:absolute;top:2px;left:3px;font-size:.62rem;color:#54697c}
+  .tl .mark{
+    position:absolute;top:20px;width:3px;height:22px;border-radius:2px;background:var(--accent2);
+    transform:translateX(-1px);cursor:pointer;opacity:.9;
+  }
+  .tl .mark:hover{opacity:1;box-shadow:0 0 0 3px rgba(56,189,248,.2)}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.74rem;color:var(--mute);margin-top:8px}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+
+  .acts{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
+  .act-chip{display:flex;gap:8px;align-items:center;background:#0f1720;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:.85rem}
+  .act-chip b{color:var(--accent2)}
+
+  .modal{position:fixed;inset:0;background:rgba(3,6,10,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:60;padding:16px}
+  .modal.open{display:flex}
+  .modal .box{
+    background:linear-gradient(180deg,#121a23,#0d141b);border:1px solid var(--line2);
+    border-radius:16px;box-shadow:var(--shadow);width:min(760px,96vw);max-height:92vh;overflow:auto;
+  }
+  .modal .box.narrow{width:min(560px,96vw)}
+  .modal .mh{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#121a23;z-index:2}
+  .modal .mh h3{margin:0;font-size:1rem}
+  .modal .mh .x{margin-left:auto;background:transparent;border:0;color:var(--mute);font-size:1.3rem;cursor:pointer;line-height:1}
+  .modal .mb{padding:14px 16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:620px){.grid2{grid-template-columns:1fr}}
+  label.f{display:block;font-size:.78rem;color:var(--mute);margin:10px 0 4px}
+  .field{width:100%;background:#0c141c;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .check{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:.86rem}
+  .mfoot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#0f161e}
+  .zonas-canvas-wrap{position:relative;background:#05080b;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .zonas-canvas-wrap canvas{display:block;width:100%;height:auto;cursor:crosshair}
+  .zlist{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-height:190px;overflow:auto}
+  .zitem{display:flex;gap:8px;align-items:center;background:#0f1720;border:1px solid var(--line);border-radius:9px;padding:6px 8px}
+  .zitem input{flex:1;background:#0c141c;border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+  .zitem small{color:var(--mute);font-variant-numeric:tabular-nums;font-size:.74rem}
+  .detail-media{width:100%;border-radius:10px;border:1px solid var(--line2);background:#05080b;display:block;margin-bottom:10px}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:.86rem}
+  .kv dt{color:var(--mute)}
+  .kv dd{margin:0}
+
+  #toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:80}
+  .toast{
+    background:#12202b;border:1px solid #2b6b4a;color:#d7ffe9;border-radius:10px;
+    padding:10px 14px;box-shadow:var(--shadow);font-size:.86rem;max-width:340px;
+    animation:in .18s ease-out;
+  }
+  .toast.err{border-color:#6b2525;color:#ffd7d7;background:#2a1414}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">Vigia <span class="sub">vigilancia local</span></div>
+  <div class="pills" id="pills">
+    <span class="pill"><span class="dot" id="dotCam"></span>cámara</span>
+    <span class="pill">FPS <b id="pFps">–</b></span>
+    <span class="pill">personas <b id="pPer">0</b></span>
+    <span class="pill">objetos <b id="pObj">0</b></span>
+    <span class="pill" id="pRes">–</span>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btnZonas">◫ Zonas</button>
+    <button class="btn" id="btnAjustes">⚙ Ajustes</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="card video-card">
+    <div class="video-toolbar">
+      <div class="seg" id="segSize">
+        <button data-s="s">S</button>
+        <button data-s="m" class="on">M</button>
+        <button data-s="l">L</button>
+        <button data-s="xl">XL</button>
+        <button data-s="fit">Ancho</button>
+      </div>
+      <button class="btn sm ghost" id="btnFull" title="Pantalla completa">⛶</button>
+      <span class="hint">tamaño del vídeo</span>
+    </div>
+    <div class="stage" id="stage">
+      <img id="video" src="/video.mjpg" alt="cámara en vivo">
+      <div class="offline-tag">CÁMARA NO DISPONIBLE</div>
+    </div>
+    <div class="health" id="salud"><span>salud: …</span></div>
+  </section>
+
+  <aside class="col">
+    <section class="card">
+      <div class="card-head"><h2>Actividad</h2><span class="chip" id="actCount">0</span></div>
+      <div class="feed" id="feed"><div class="empty">sin eventos todavía</div></div>
+    </section>
+
+    <section class="card">
+      <div class="tabs" id="tabs">
+        <button data-tab="hist" class="on">Historial</button>
+        <button data-tab="clips">Clips</button>
+        <button data-tab="time">Timeline</button>
+      </div>
+      <div class="tab" id="tab-hist">
+        <div class="filters">
+          <select id="ftipo">
+            <option value="">todos</option>
+            <option>persona_entra</option><option>persona_salio</option>
+            <option>permanencia</option><option>actividad</option>
+            <option>objeto_aparece</option><option>objeto_desaparece</option>
+          </select>
+          <input id="fdesde" type="date" title="desde">
+          <select id="flimite"><option>15</option><option>50</option><option>100</option><option>300</option></select>
+          <button class="btn sm ghost" id="btnRefrescar">↻</button>
+        </div>
+        <div class="rows" id="hist"><div class="empty">cargando…</div></div>
+      </div>
+      <div class="tab" id="tab-clips" hidden>
+        <div class="rows" id="clips"><div class="empty">cargando…</div></div>
+      </div>
+      <div class="tab" id="tab-time" hidden>
+        <div class="tl-head">
+          <input id="tdia" type="date" class="filters">
+          <button class="btn sm ghost" id="btnTl">↻</button>
+          <span class="chip" id="tlTotal">0 eventos</span>
+        </div>
+        <div class="tl" id="tl"></div>
+        <div class="legend">
+          <span><i style="background:#4ade80"></i>entra</span>
+          <span><i style="background:#f87171"></i>sale</span>
+          <span><i style="background:#fbbf24"></i>permanencia</span>
+          <span><i style="background:#a78bfa"></i>actividad</span>
+          <span><i style="background:#38bdf8"></i>objeto</span>
+        </div>
+        <div class="rows" id="tlRows" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Personas ahora</h2></div>
+      <div class="acts" id="acts"><div class="empty">sin personas</div></div>
+    </section>
+  </aside>
+</main>
+
+<!-- Editor de zonas -->
+<div class="modal" id="mZonas">
+  <div class="box">
+    <div class="mh"><h3>◫ Zonas</h3>
+      <span class="chip" id="zDims">–</span>
+      <button class="x" data-close="mZonas">×</button>
+    </div>
+    <div class="mb">
+      <p style="margin:0 0 10px;color:var(--mute);font-size:.84rem">
+        Arrastra sobre la imagen para dibujar una zona. Las zonas se aplican en
+        caliente y se guardan en <code>config.yaml</code>.
+      </p>
+      <div class="zonas-canvas-wrap">
+        <canvas id="zCanvas" width="640" height="480"></canvas>
+      </div>
+      <div class="zlist" id="zList"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn ghost" id="zCaptura">↻ Nueva captura</button>
+      <button class="btn" data-close="mZonas">Cancelar</button>
+      <button class="btn primary" id="zGuardar">Guardar zonas</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ajustes -->
+<div class="modal" id="mAjustes">
+  <div class="box narrow">
+    <div class="mh"><h3>⚙ Ajustes</h3><button class="x" data-close="mAjustes">×</button></div>
+    <div class="mb">
+      <div class="grid2">
+        <div><label class="f">Permanencia (seg)</label><input class="field" id="a_permanencia" type="number" min="1" max="3600"></div>
+        <div><label class="f">Persona sin verse = salida (seg)</label><input class="field" id="a_timeout_persona" type="number" min="1" max="3600"></div>
+        <div><label class="f">Objeto ausente = desaparece (seg)</label><input class="field" id="a_timeout_objeto" type="number" min="1" max="3600"></div>
+        <div><label class="f">Clases vigiladas</label><input class="field" id="a_vigiladas" placeholder="laptop, backpack, cell phone"></div>
+      </div>
+
+      <label class="f">Resolución de captura (requiere reiniciar)</label>
+      <div class="grid2">
+        <input class="field" id="a_ancho" type="number" min="160" max="3840" placeholder="ancho">
+        <input class="field" id="a_alto" type="number" min="120" max="2160" placeholder="alto">
+      </div>
+
+      <label class="f">Franjas activas (JSON)</label>
+      <textarea class="field" id="a_franjas" rows="3" spellcheck="false"></textarea>
+
+      <div class="grid2" style="margin-top:6px">
+        <div><label class="f">Conservar eventos (días)</label><input class="field" id="a_ret_eventos" type="number" min="0"></div>
+        <div><label class="f">Conservar clips (días)</label><input class="field" id="a_ret_clips" type="number" min="0"></div>
+        <div><label class="f">Tope de carpeta de clips (MB)</label><input class="field" id="a_ret_mb" type="number" min="0"></div>
+        <div><label class="f">Mantenimiento cada (min)</label><input class="field" id="a_mantener" type="number" min="1" max="1440"></div>
+      </div>
+
+      <label class="check"><input type="checkbox" id="a_clips"> guardar clips</label>
+      <label class="check"><input type="checkbox" id="a_miniaturas"> guardar miniatura de cada evento</label>
+      <label class="check"><input type="checkbox" id="a_notificar"> avisos de Windows</label>
+      <label class="check"><input type="checkbox" id="a_actividades"> detectar actividades (pose)</label>
+    </div>
+    <div class="mfoot">
+      <span id="ajustes_msg" class="hint" style="margin-right:auto"></span>
+      <button class="btn" data-close="mAjustes">Cancelar</button>
+      <button class="btn primary" id="aGuardar">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detalle de evento -->
+<div class="modal" id="mDetalle">
+  <div class="box">
+    <div class="mh"><h3 id="dTitulo">Evento</h3><button class="x" data-close="mDetalle">×</button></div>
+    <div class="mb" id="dCuerpo"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toast(msg, ok = true){
+  const d = document.createElement('div');
+  d.className = 'toast' + (ok ? '' : ' err');
+  d.textContent = msg;
+  $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), 4200);
+}
+
+/* ---------- tamaño del video ---------- */
+const TAMANOS = {s:'min(100%,420px)', m:'min(100%,720px)',
+                 l:'min(100%,1024px)', xl:'min(100%,1400px)', fit:'100%'};
+function aplicarTamano(clave){
+  const k = TAMANOS[clave] ? clave : 'm';
+  document.documentElement.style.setProperty('--vw', TAMANOS[k]);
+  document.body.classList.toggle('wide', k === 'xl');
+  document.querySelectorAll('#segSize button').forEach(b =>
+    b.classList.toggle('on', b.dataset.s === k));
+  try{ localStorage.setItem('vigia.video', k); }catch(e){}
+}
+document.querySelectorAll('#segSize button').forEach(b =>
+  b.onclick = () => aplicarTamano(b.dataset.s));
+aplicarTamano(localStorage.getItem('vigia.video') || 'm');
+$('btnFull').onclick = () => {
+  const img = $('video');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (img.requestFullscreen) img.requestFullscreen();
+};
+
+/* ---------- pestañas ---------- */
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs button').forEach(x =>
+    x.classList.toggle('on', x === b));
+  ['hist','clips','time'].forEach(t =>
+    $('tab-' + t).hidden = (t !== b.dataset.tab));
+  if (b.dataset.tab === 'hist') cargarHistorial();
+  if (b.dataset.tab === 'clips') cargarClips();
+  if (b.dataset.tab === 'time') cargarTimeline();
+});
+
+/* ---------- modales ---------- */
+document.querySelectorAll('[data-close]').forEach(b =>
+  b.onclick = () => $(b.dataset.close).classList.remove('open'));
+document.querySelectorAll('.modal').forEach(m =>
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal.open')
+    .forEach(m => m.classList.remove('open'));
+});
+
+/* ---------- media ---------- */
+const media = (f) => '/media/' + encodeURIComponent(f);
+
+function claseEvento(tipo){
+  if (tipo.includes('entra') || tipo.includes('aparece')) return 'entra';
+  if (tipo.includes('salio') || tipo.includes('desaparece')) return 'salio';
+  if (tipo === 'permanencia') return 'aviso';
+  if (tipo === 'actividad') return 'act';
+  return '';
+}
+function horaDe(e){
+  if (e.marca_pantalla) return e.marca_pantalla;
+  if (e.hora) return e.hora;
+  return (e.marca_sistema || '').slice(11) || '';
+}
+function cuandoDe(e){
+  return e.marca_sistema || (e.cuando || '');
+}
+
+/* ---------- detalle ---------- */
+function verEvento(e){
+  $('dTitulo').textContent = e.tipo + (e.detalle ? ' — ' + e.detalle : '');
+  let html = '';
+  if (e.miniatura) html += `<img class="detail-media" src="${media(e.miniatura)}" alt="miniatura">`;
+  if (e.clip) html += `<video class="detail-media" controls preload="metadata" src="${media(e.clip)}"></video>`;
+  if (!e.miniatura && !e.clip) html += '<p class="empty">Este evento no tiene captura guardada.</p>';
+  html += `<dl class="kv">
+    <dt>Cuándo</dt><dd>${esc(cuandoDe(e) || '—')}</dd>
+    <dt>Tipo</dt><dd><span class="tag ${esc(e.tipo)}">${esc(e.tipo)}</span></dd>
+    <dt>Detalle</dt><dd>${esc(e.detalle || '—')}</dd>
+    <dt>Persona</dt><dd>${e.id_tracking != null ? '#' + esc(e.id_tracking) : '—'}</dd>
+  </dl>`;
+  $('dCuerpo').innerHTML = html;
+  $('mDetalle').classList.add('open');
+}
+
+function filaEvento(e){
+  const mini = e.miniatura
+    ? `<img class="thumb" src="${media(e.miniatura)}" alt="" loading="lazy">`
+    : '';
+  return `<div class="row" data-ev='${esc(JSON.stringify(e))}'>
+    ${mini}
+    <div class="g">
+      <b>${esc(horaDe(e))} · <span class="tag ${esc(e.tipo)}">${esc(e.tipo)}</span></b>
+      <small>${esc(e.detalle || '—')}${e.id_tracking != null ? ' · id ' + esc(e.id_tracking) : ''}</small>
+    </div>
+    ${e.clip ? '<span class="tag">▶ clip</span>' : ''}
+  </div>`;
+}
+function enlazarFilas(cont){
+  cont.querySelectorAll('.row[data-ev]').forEach(r => {
+    r.onclick = () => { try{ verEvento(JSON.parse(r.dataset.ev)); }catch(err){} };
+  });
+}
+
+/* ---------- historial ---------- */
+async function cargarHistorial(){
+  const tipo = $('ftipo').value;
+  const desde = $('fdesde').value;
+  const limite = $('flimite').value;
+  const q = `/historial?limite=${limite}` +
+            (tipo ? `&tipo=${encodeURIComponent(tipo)}` : '') +
+            (desde ? `&desde=${encodeURIComponent(desde)}` : '');
+  try{
+    const h = await (await fetch(q)).json();
+    const c = $('hist');
+    c.innerHTML = h.length ? h.map(filaEvento).join('')
+                           : '<div class="empty">sin eventos</div>';
+    enlazarFilas(c);
+  }catch(e){ $('hist').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
+}
+$('ftipo').onchange = cargarHistorial;
+$('fdesde').onchange = cargarHistorial;
+$('flimite').onchange = cargarHistorial;
+$('btnRefrescar').onclick = cargarHistorial;
+
+/* ---------- clips ---------- */
+async function cargarClips(){
+  try{
+    const cs = await (await fetch('/clips')).json();
+    const c = $('clips');
+    c.innerHTML = cs.length ? cs.map(x => `<div class="row" data-clip="${esc(x.fichero)}">
+        <div class="g"><b>${esc(x.fichero)}</b>
+          <small>${Math.round((x.tamano || 0) / 1024)} KB · ${esc(x.cuando || '')}</small></div>
+        <span class="tag">▶</span></div>`).join('')
+      : '<div class="empty">sin clips todavía</div>';
+    c.querySelectorAll('[data-clip]').forEach(r => r.onclick = () => {
+      verEvento({tipo: 'clip', detalle: r.dataset.clip, clip: r.dataset.clip});
+    });
+  }catch(e){ $('clips').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
+}
+
+/* ---------- timeline ---------- */
+function colorTipo(t){
+  if (t === 'persona_entra') return '#4ade80';
+  if (t === 'persona_salio') return '#f87171';
+  if (t === 'permanencia') return '#fbbf24';
+  if (t === 'actividad') return '#a78bfa';
+  return '#38bdf8';
+}
+async function cargarTimeline(){
+  const dia = $('tdia').value || new Date().toISOString().slice(0, 10);
+  $('tdia').value = dia;
+  try{
+    const r = await fetch(`/timeline?dia=${encodeURIComponent(dia)}`);
+    const datos = await r.json();
+    const evs = datos.eventos || [];
+    $('tlTotal').textContent = evs.length + ' eventos';
+
+    let html = '';
+    for(let h = 1; h < 24; h++){
+      html += `<div class="hour" style="left:${(h / 24 * 100).toFixed(3)}%"><span>${h}h</span></div>`;
+    }
+    for(const e of evs){
+      const hora = horaDe(e).split(':').map(Number);
+      if (hora.length < 2 || hora.some(isNaN)) continue;
+      const seg = hora[0] * 3600 + hora[1] * 60 + (hora[2] || 0);
+      const pct = (seg / 86400 * 100).toFixed(3);
+      html += `<div class="mark" style="left:${pct}%;background:${colorTipo(e.tipo)}"
+        title="${esc(horaDe(e) + ' ' + e.tipo + ' ' + (e.detalle || ''))}"
+        data-ev='${esc(JSON.stringify(e))}'></div>`;
+    }
+    const tl = $('tl');
+    tl.innerHTML = html;
+    tl.querySelectorAll('.mark').forEach(m => m.onclick = () => {
+      try{ verEvento(JSON.parse(m.dataset.ev)); }catch(err){}
+    });
+
+    const c = $('tlRows');
+    c.innerHTML = evs.length ? evs.slice().reverse().map(filaEvento).join('')
+                             : '<div class="empty">sin eventos ese día</div>';
+    enlazarFilas(c);
+  }catch(e){ $('tl').innerHTML = '<div class="empty">no se pudo cargar</div>'; }
+}
+$('btnTl').onclick = cargarTimeline;
+$('tdia').onchange = cargarTimeline;
+
+/* ---------- zonas ---------- */
+let zonas = {};          // nombre -> [x1,y1,x2,y2]
+let dims = {ancho: 640, alto: 480};
+let arrastre = null;
+
+function pintarZonas(){
+  const cv = $('zCanvas');
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const colores = ['#38bdf8', '#4ade80', '#fbbf24', '#a78bfa', '#f87171', '#2dd4bf'];
+  let i = 0;
+  for(const [nombre, c] of Object.entries(zonas)){
+    const col = colores[i++ % colores.length];
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.setLineDash([]);
+    ctx.strokeRect(c[0], c[1], c[2] - c[0], c[3] - c[1]);
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    const w = Math.max(70, nombre.length * 9);
+    ctx.fillRect(c[0], Math.max(0, c[1] - 22), w, 22);
+    ctx.fillStyle = col;
+    ctx.font = '600 15px system-ui';
+    ctx.fillText(nombre, c[0] + 6, Math.max(15, c[1] - 6));
+  }
+  if(arrastre){
+    ctx.strokeStyle = '#e6edf5'; ctx.setLineDash([6, 5]); ctx.lineWidth = 2;
+    ctx.strokeRect(arrastre.x1, arrastre.y1,
+                   arrastre.x2 - arrastre.x1, arrastre.y2 - arrastre.y1);
+  }
+  listarZonas();
+}
+function listarZonas(){
+  const c = $('zList');
+  const nombres = Object.keys(zonas);
+  if(!nombres.length){ c.innerHTML = '<div class="empty">sin zonas: arrastra sobre la imagen</div>'; return; }
+  c.innerHTML = nombres.map(n => `<div class="zitem">
+      <input value="${esc(n)}" data-nombre="${esc(n)}">
+      <small>${zonas[n].join(', ')}</small>
+      <button class="btn sm danger" data-borrar="${esc(n)}">✕</button>
+    </div>`).join('');
+  c.querySelectorAll('input[data-nombre]').forEach(inp => {
+    inp.onchange = () => {
+      const viejo = inp.dataset.nombre;
+      const nuevo = inp.value.trim() || viejo;
+      if(nuevo !== viejo && !zonas[nuevo]){
+        zonas[nuevo] = zonas[viejo];
+        delete zonas[viejo];
+        pintarZonas();
+      }
+    };
+  });
+  c.querySelectorAll('[data-borrar]').forEach(b => b.onclick = () => {
+    delete zonas[b.dataset.borrar];
+    pintarZonas();
+  });
+}
+function coordsCanvas(ev){
+  const cv = $('zCanvas');
+  const r = cv.getBoundingClientRect();
+  const x = Math.round((ev.clientX - r.left) * (cv.width / r.width));
+  const y = Math.round((ev.clientY - r.top) * (cv.height / r.height));
+  return [Math.max(0, Math.min(x, cv.width)),
+          Math.max(0, Math.min(y, cv.height))];
+}
+async function capturaZonas(){
+  const cv = $('zCanvas');
+  const ctx = cv.getContext('2d');
+  const img = new Image();
+  img.onload = () => {
+    cv.width = img.naturalWidth || dims.ancho;
+    cv.height = img.naturalHeight || dims.alto;
+    ctx.drawImage(img, 0, 0);
+    pintarZonas();
+  };
+  img.onerror = () => { ctx.fillStyle = '#05080b'; ctx.fillRect(0, 0, cv.width, cv.height); pintarZonas(); };
+  img.src = '/snapshot.jpg?t=' + Date.now();
+}
+async function abrirZonas(){
+  try{
+    const r = await (await fetch('/zonas')).json();
+    zonas = r.zonas || {};
+    dims = {ancho: r.ancho || 640, alto: r.alto || 480};
+    $('zDims').textContent = `${dims.ancho}×${dims.alto}`;
+  }catch(e){ zonas = {}; }
+  $('mZonas').classList.add('open');
+  capturaZonas();
+}
+$('btnZonas').onclick = abrirZonas;
+$('zCaptura').onclick = capturaZonas;
+
+$('zCanvas').addEventListener('pointerdown', ev => {
+  const [x, y] = coordsCanvas(ev);
+  arrastre = {x1: x, y1: y, x2: x, y2: y};
+  $('zCanvas').setPointerCapture(ev.pointerId);
+});
+$('zCanvas').addEventListener('pointermove', ev => {
+  if(!arrastre) return;
+  const [x, y] = coordsCanvas(ev);
+  arrastre.x2 = x; arrastre.y2 = y;
+  pintarZonas();
+});
+$('zCanvas').addEventListener('pointerup', () => {
+  if(!arrastre) return;
+  const a = arrastre; arrastre = null;
+  const x1 = Math.min(a.x1, a.x2), x2 = Math.max(a.x1, a.x2);
+  const y1 = Math.min(a.y1, a.y2), y2 = Math.max(a.y1, a.y2);
+  if(x2 - x1 < 12 || y2 - y1 < 12){ pintarZonas(); return; }
+  let n = 1;
+  while(zonas['zona' + n]) n++;
+  zonas['zona' + n] = [x1, y1, x2, y2];
+  pintarZonas();
+});
+$('zGuardar').onclick = async () => {
+  try{
+    const r = await fetch('/zonas', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({zonas})
+    });
+    const res = await r.json();
+    if(res.ok){ toast('Zonas guardadas y aplicadas'); $('mZonas').classList.remove('open'); }
+    else toast(res.error || 'no se pudieron guardar', false);
+  }catch(e){ toast('error: ' + e.message, false); }
+};
+
+/* ---------- ajustes ---------- */
+$('btnAjustes').onclick = async () => {
+  $('mAjustes').classList.add('open');
+  try{
+    const c = await (await fetch('/config')).json();
+    $('a_permanencia').value = c.permanencia_seg ?? 30;
+    $('a_timeout_persona').value = c.timeout_persona_seg ?? 10;
+    $('a_timeout_objeto').value = c.timeout_objeto_seg ?? 10;
+    $('a_vigiladas').value = (c.vigilar_desaparicion || []).join(', ');
+    $('a_franjas').value = JSON.stringify(c.franjas || []);
+    $('a_ancho').value = c.ancho ?? 640;
+    $('a_alto').value = c.alto ?? 480;
+    $('a_ret_eventos').value = c.retencion_dias ?? 30;
+    $('a_ret_clips').value = c.retencion_clips_dias ?? 14;
+    $('a_ret_mb').value = c.retencion_clips_mb ?? 2048;
+    $('a_mantener').value = c.mantener_cada_min ?? 60;
+    $('a_clips').checked = !!c.guardar_clips;
+    $('a_miniaturas').checked = c.miniaturas !== false;
+    $('a_notificar').checked = !!c.notificar;
+    $('a_actividades').checked = !!c.actividades;
+  }catch(e){}
+};
+$('aGuardar').onclick = async () => {
+  const msg = $('ajustes_msg');
+  let franjas = [];
+  try{ franjas = JSON.parse($('a_franjas').value || '[]'); }
+  catch(e){ msg.className = 'hint'; msg.textContent = 'franjas: JSON inválido'; return; }
+  const cuerpo = {
+    permanencia_seg: +$('a_permanencia').value,
+    timeout_persona_seg: +$('a_timeout_persona').value,
+    timeout_objeto_seg: +$('a_timeout_objeto').value,
+    vigilar_desaparicion: $('a_vigiladas').value.split(',').map(s => s.trim()).filter(Boolean),
+    franjas,
+    ancho: +$('a_ancho').value,
+    alto: +$('a_alto').value,
+    retencion_dias: +$('a_ret_eventos').value,
+    retencion_clips_dias: +$('a_ret_clips').value,
+    retencion_clips_mb: +$('a_ret_mb').value,
+    mantener_cada_min: +$('a_mantener').value,
+    guardar_clips: $('a_clips').checked,
+    miniaturas: $('a_miniaturas').checked,
+    notificar: $('a_notificar').checked,
+    actividades: $('a_actividades').checked
+  };
+  try{
+    const r = await fetch('/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(cuerpo)
+    });
+    const res = await r.json();
+    if(res.ok){ toast('Ajustes aplicados'); $('mAjustes').classList.remove('open'); }
+    else toast(res.error || 'no se pudo guardar', false);
+  }catch(e){ toast('error: ' + e.message, false); }
+};
+
+/* ---------- salud y estado ---------- */
+let ultimoEstadoOk = null;
+async function tick(){
+  try{
+    const [er, ev] = await Promise.all([fetch('/estado'), fetch('/eventos')]);
+    const s = await er.json();
+    const l = await ev.json();
+
+    $('pFps').textContent = (s.fps || 0).toFixed(1);
+    $('pPer').textContent = s.personas ?? 0;
+    $('pObj').textContent = s.objetos ?? 0;
+    if(s.ancho) $('pRes').textContent = `${s.ancho}×${s.alto}`;
+    const dot = $('dotCam');
+    dot.className = 'dot ' + (s.camara_ok ? 'ok' : 'bad');
+    $('stage').classList.toggle('offline', !s.camara_ok);
+
+    if(l.length !== ultimoEstadoOk && ultimoEstadoOk !== null){
+      // solo refrescamos historial si hay eventos nuevos
+      cargarHistorial();
+    }
+    ultimoEstadoOk = l.length;
+
+    $('actCount').textContent = l.length;
+    $('feed').innerHTML = l.length ? l.map(e => {
+      const el = document.createElement('div');
+      const tipo = e.tipo || '';
+      return `<div class="ev ${claseEvento(tipo)}">
+        <span class="t">${esc(e.hora || '')}</span>
+        <span class="n"><b>${esc(tipo)}</b><small>${esc(e.etiqueta || '')}</small></span>
+      </div>`;
+    }).join('') : '<div class="empty">sin eventos todavía</div>';
+
+    const ra = await fetch('/actividades');
+    const acts = await ra.json();
+    const claves = Object.keys(acts || {});
+    $('acts').innerHTML = claves.length ? claves.map(k =>
+      `<div class="act-chip"><b>#${esc(k)}</b><span>${esc(acts[k])}</span></div>`).join('')
+      : '<div class="empty">sin personas</div>';
+  }catch(e){}
+}
+
+async function salud(){
+  try{
+    const s = await (await fetch('/salud')).json();
+    const h = Math.floor((s.uptime_seg || 0) / 3600);
+    const m = Math.floor(((s.uptime_seg || 0) % 3600) / 60);
+    $('salud').innerHTML = `
+      <span>uptime <b>${h}h ${m}m</b></span>
+      <span>BD <b>${((s.db_bytes || 0) / 1048576).toFixed(1)} MB</b> · ${s.eventos ?? 0} eventos</span>
+      <span>clips <b>${s.clips?.n ?? 0}</b> (${((s.clips?.bytes || 0) / 1048576).toFixed(0)} MB)</span>
+      <span>disco libre <b>${(s.disco_libre_gb ?? 0).toFixed(1)} GB</b></span>
+      <span>v${esc(s.version || '')}</span>`;
+  }catch(e){ $('salud').innerHTML = '<span>salud: no disponible</span>'; }
+}
+
+/* ---------- arranque ---------- */
+const hoy = new Date().toISOString().slice(0, 10);
+$('tdia').value = hoy;
+$('fdesde').value = '';
+tick(); cargarHistorial(); salud();
+setInterval(tick, 1500);
+setInterval(salud, 15000);
+setInterval(() => { if(!$('tab-hist').hidden) cargarHistorial(); }, 8000);
+</script>
+</body>
+</html>

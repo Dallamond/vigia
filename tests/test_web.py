@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import vigia.web as web
+from vigia.almacen import Almacen
 from vigia.detector import Deteccion
 from vigia.web import Estado
 
@@ -56,15 +57,20 @@ def test_index_carga(cliente):
     r = cliente.get("/")
     assert r.status_code == 200
     assert "Vigia" in r.text
+    # debe servirse el panel nuevo (static/index.html), no el minimo
+    assert 'id="segSize"' in r.text
+    assert 'id="zCanvas"' in r.text
 
 
 def test_estado_tiene_el_formato_esperado(cliente):
     r = cliente.get("/estado")
     assert r.status_code == 200
     datos = r.json()
-    assert set(datos) == {"fps", "camara_ok", "personas", "objetos"}
+    assert {"fps", "camara_ok", "personas", "objetos",
+            "ancho", "alto"} <= set(datos)
     assert datos["fps"] >= 0
     assert isinstance(datos["personas"], int)
+    assert datos["ancho"] > 0 and datos["alto"] > 0
 
 
 def test_eventos_tiene_el_formato_esperado(cliente):
@@ -232,4 +238,136 @@ def test_clip_404_si_clips_desactivados(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         web.clip("a.mp4")
     assert exc.value.status_code == 404
+
+
+def test_salud_incluye_disco_bd_y_clips(monkeypatch, cliente, tmp_path):
+    a = Almacen(tmp_path / "s.db")
+    a.guardar("persona_entra")
+    monkeypatch.setattr(web, "_almacen", a)
+    datos = cliente.get("/salud").json()
+    assert {"version", "uptime_seg", "eventos", "db_bytes", "clips",
+            "disco_libre_gb", "disco_total_gb"} <= set(datos)
+    assert datos["eventos"] == 1
+    assert datos["db_bytes"] > 0
+    assert datos["disco_libre_gb"] >= 0
+    a.cerrar()
+
+
+def test_timeline_devuelve_solo_ese_dia(monkeypatch, cliente, tmp_path):
+    a = Almacen(tmp_path / "t.db")
+    a.guardar("persona_entra", cuando="2026-10-27 09:00:00")
+    a.guardar("persona_salio", cuando="2026-10-27 09:30:00")
+    a.guardar("persona_entra", cuando="2026-10-26 09:00:00")
+    monkeypatch.setattr(web, "_almacen", a)
+    datos = cliente.get("/timeline?dia=2026-10-27").json()
+    assert datos["dia"] == "2026-10-27"
+    assert datos["total"] == 2
+    assert [e["tipo"] for e in datos["eventos"]] == ["persona_entra",
+                                                     "persona_salio"]
+    a.cerrar()
+
+
+def test_timeline_sin_dia_usa_hoy(cliente):
+    datos = cliente.get("/timeline").json()
+    assert "dia" in datos and isinstance(datos["eventos"], list)
+
+
+def test_zonas_get_devuelve_dimensiones(cliente):
+    datos = cliente.get("/zonas").json()
+    assert isinstance(datos["zonas"], dict)
+    assert datos["ancho"] > 0 and datos["alto"] > 0
+
+
+def test_zonas_put_aplica_y_persiste(monkeypatch, cliente, tmp_path):
+    monkeypatch.setattr(web, "_RUTA_CONFIG", tmp_path / "config.yaml")
+    zonas_antes = dict(web._motor_compartido.zonas)
+    cfg_antes = dict(web._config)
+    try:
+        r = cliente.put("/zonas", json={"zonas": {"puerta": [0, 0, 120, 90]}})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert web._motor_compartido.zonas == {"puerta": (0, 0, 120, 90)}
+        assert (tmp_path / "config.yaml").exists()
+
+        r = cliente.put("/zonas", json={"zonas": {"mala": [1, 2]}})
+        assert r.status_code == 200 and r.json()["ok"] is False
+    finally:
+        web._motor_compartido.zonas = zonas_antes
+        web._config.clear()
+        web._config.update(cfg_antes)
+
+
+def test_config_rechaza_un_booleano_inventado(monkeypatch, cliente, tmp_path):
+    monkeypatch.setattr(web, "_RUTA_CONFIG", tmp_path / "config.yaml")
+    r = cliente.post("/config", json={"notificar": "quizas"})
+    assert r.status_code == 400
+
+
+def test_config_acepta_texto_booleano_y_lo_interpreta(monkeypatch, cliente,
+                                                      tmp_path):
+    monkeypatch.setattr(web, "_RUTA_CONFIG", tmp_path / "config.yaml")
+    cfg_antes = dict(web._config)
+    try:
+        r = cliente.post("/config", json={"notificar": "false"})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert web._config["notificar"] is False
+    finally:
+        web._config.clear()
+        web._config.update(cfg_antes)
+
+
+def test_media_sirve_jpg_y_rechaza_otros(monkeypatch, cliente, tmp_path):
+    carpeta = tmp_path / "media"
+    carpeta.mkdir()
+    (carpeta / "a.jpg").write_bytes(b"\xff\xd8\xff\xe0jpeg")
+    (carpeta / "notas.txt").write_bytes(b"hola")
+    monkeypatch.setattr(web, "_clips", _ClipsFalso(carpeta))
+
+    r = cliente.get("/media/a.jpg")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    with pytest.raises(HTTPException):
+        web.media("notas.txt")
+    with pytest.raises(HTTPException):
+        web.media("../secreto.jpg")
+
+
+class _ClipsConMedia:
+    def __init__(self, carpeta):
+        self.carpeta = carpeta
+
+    def guardar_miniatura(self, frame, tipo):
+        return self.carpeta / f"{tipo}_min.jpg"
+
+    def guardar(self, tipo):
+        return self.carpeta / f"{tipo}.mp4"
+
+
+def test_anotar_evento_enlaza_miniatura_y_clip(tmp_path):
+    a = Almacen(tmp_path / "a.db")
+    clips = _ClipsConMedia(tmp_path)
+    estado = Estado()
+    ev_id = web._anotar_evento(
+        estado, a, clips,
+        {"miniaturas": True, "guardar_clips": True, "notificar": False},
+        np.zeros((8, 8, 3), np.uint8), "persona_entra", "id 4",
+        id_tracking=4)
+    assert ev_id > 0
+    fila = a.historial()[0]
+    assert fila["miniatura"].endswith("_min.jpg")
+    assert fila["clip"].endswith(".mp4")
+    assert estado.eventos[0][1] == "persona_entra"
+    a.cerrar()
+
+
+def test_anotar_evento_reutiliza_el_id_del_motor(tmp_path):
+    a = Almacen(tmp_path / "a.db")
+    clips = _ClipsConMedia(tmp_path)
+    previo = a.guardar("permanencia", detalle="x")
+    estado = Estado()
+    web._anotar_evento(estado, a, clips,
+                       {"miniaturas": True, "guardar_clips": False},
+                       np.zeros((4, 4, 3), np.uint8), "permanencia", "x",
+                       evento_id=previo)
+    assert a.contar() == 1  # no se duplica el evento
+    assert a.historial()[0]["miniatura"].endswith("_min.jpg")
+    a.cerrar()
 

@@ -23,9 +23,28 @@ DEFAULTS = {
     "franjas": [],
     "guardar_clips": True,
     "notificar": True,
+    # captura (requiere reiniciar el dashboard para aplicarse)
+    "ancho": 640,
+    "alto": 480,
+    # media: copia JPEG del instante de cada evento
+    "miniaturas": True,
+    # mantenimiento: 0 dias = no purgar
+    "retencion_dias": 30,
+    "retencion_clips_dias": 14,
+    "retencion_clips_mb": 2048,
+    "mantener_cada_min": 60,
     # actividades requiere el modelo de pose (descarga extra en primer uso):
     # off por defecto para tests y arranque ligero; se activa en config.yaml
     "actividades": False,
+}
+
+_LIMITES = {
+    "ancho": (160, 3840),
+    "alto": (120, 2160),
+    "retencion_dias": (0, 3650),
+    "retencion_clips_dias": (0, 3650),
+    "retencion_clips_mb": (0, 1024 * 1024),
+    "mantener_cada_min": (1, 1440),
 }
 
 _HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -44,6 +63,15 @@ def _numero(valor, defecto, clave: str):
     log.warning("config: %s no es numerico (%r); se usa %r",
                 clave, valor, defecto)
     return defecto
+
+
+def _entero(valor, defecto: int, clave: str, minimo: int, maximo: int) -> int:
+    numero = _numero(valor, defecto, clave)
+    try:
+        numero = int(round(float(numero)))
+    except (TypeError, ValueError):
+        numero = defecto
+    return max(minimo, min(numero, maximo))
 
 
 def _booleano(valor, defecto, clave: str):
@@ -141,6 +169,10 @@ def cargar_config(ruta: str | Path = "config.yaml") -> dict:
         cfg["guardar_clips"], DEFAULTS["guardar_clips"], "guardar_clips")
     cfg["notificar"] = _booleano(
         cfg["notificar"], DEFAULTS["notificar"], "notificar")
+    cfg["miniaturas"] = _booleano(
+        cfg["miniaturas"], DEFAULTS["miniaturas"], "miniaturas")
+    for clave, (minimo, maximo) in _LIMITES.items():
+        cfg[clave] = _entero(cfg[clave], DEFAULTS[clave], clave, minimo, maximo)
     if "actividades" not in cfg:
         cfg["actividades"] = DEFAULTS.get("actividades", False)
     cfg["actividades"] = _booleano(

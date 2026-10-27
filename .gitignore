@@ -10,4 +10,7 @@ docs/superpowers/
 *.db-wal
 *.db-shm
 *.log
+logs/
 clips/
+modelos/
+*.onnx

@@ -51,3 +51,33 @@ def test_meter_guarda_copias_independientes(tmp_path):
     g.meter(frame)
     frame[:] = 255  # mutar el original no debe afectar al buffer
     assert g._buf[0][0, 0, 0] == 10
+
+
+def test_guardar_miniatura_escribe_un_jpg_legible(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    destino = g.guardar_miniatura(_frame(120), "persona_entra")
+    assert destino is not None and destino.suffix == ".jpg"
+    img = cv2.imread(str(destino))
+    assert img is not None and img.shape[1] == 64 and img.shape[0] == 48
+
+
+def test_guardar_miniatura_sin_frame_no_rompe(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    assert g.guardar_miniatura(None, "x") is None
+
+
+def test_miniaturas_y_clips_no_comparten_nombre(tmp_path):
+    g = GuardadorClips(max_frames=2, carpeta=str(tmp_path / "clips"))
+    g.meter(_frame())
+    clip = g.guardar("persona_entra")
+    mini = g.guardar_miniatura(_frame(), "persona_entra")
+    g.esperar_trabajos(10)
+    assert clip.stem != mini.stem
+
+
+def test_podar_miniaturas(tmp_path):
+    g = GuardadorClips(carpeta=str(tmp_path / "clips"))
+    for _ in range(5):
+        g.guardar_miniatura(_frame(), "x")
+    assert g.podar_miniaturas(max_ficheros=2) == 3
+    assert len(list((tmp_path / "clips").glob("*.jpg"))) == 2

@@ -1,37 +1,61 @@
-# Vigia - configuracion principal
-# modificar recargando el servidor (no hay recarga caliente todavia)
+# ---------------------------------------------------------------------------
+# Vigia - configuracion activa.
+# Casi todo se puede cambiar desde el panel (boton Ajustes); si editas a mano,
+# Vigia avisa en el log y usa el valor por defecto cuando algo esta mal.
+# Referencia completa y comentada: config.example.yaml
+# ---------------------------------------------------------------------------
 
+# Fichero SQLite de eventos.
 almacen: vigia.db
 
-# Permanencia: si una persona no sale de la vista durante X seg -> evento `permanencia`
+# --- captura ---------------------------------------------------------------
+# 640x480 es el punto dulce de una webcam normal (~14 fps).
+# Cambiar ancho/alto requiere reiniciar el dashboard.
+ancho: 640
+alto: 480
+
+# --- reglas ----------------------------------------------------------------
+# Segundos de presencia para disparar `permanencia`.
 permanencia_seg: 30
 
-# Vigilancia de objetos: si la clase desaparece de la vista durante
-# timeout_objeto_seg -> evento `objeto_desaparece` / reaparicion -> `objeto_aparece`
+# Segundos sin ver a una persona para anunciar `persona_salio`.
+timeout_persona_seg: 10
+
+# Segundos sin ver un objeto vigilado para `objeto_desaparece`.
+timeout_objeto_seg: 10
+
+# Clases COCO cuyo aparecer/desaparecer se registra.
 vigilar_desaparicion:
   - laptop
   - backpack
   - cell phone
-timeout_objeto_seg: 10
 
-# Zonas: dict nombre -> (x1, y1, x2, y2) en pixeles del frame 640x480.
-# Un evento que ocurra dentro de una zona la anota en el detalle.
-# Comentar la zona para desactivarla.
-# zonas:
-#   puerta: [0, 0, 120, 300]
-#   escritorio: [200, 300, 600, 480]
+# Zonas: nombre -> [x1, y1, x2, y2] en pixeles. Dibujarlas desde el panel.
+zonas: {}
 
-# Franjas horarias: solo se generan eventos dentro de la franja (formato HH:MM).
-# Franja que cruza medianoche (ej. 22:00-08:00) se soporta.
-# Ejemplo (activar solo de madrugada):
-# franjas:
-#   - desde: "22:00"
-#     hasta: "08:00"
+# Franjas activas (HH:MM). Vacio = siempre activo.
+franjas: []
 
-# Fase 5
-guardar_clips: true    # clip ±5s al disparar un evento relevante
-notificar: true        # toast de Windows al disparar un evento relevante
+# --- media -----------------------------------------------------------------
+# MP4 de los segundos previos en los eventos importantes.
+guardar_clips: true
 
-# Actividades por persona (usar PC, movil, dormir, sentarse...)
-# Necesita el modelo pose (se descarga la primera vez, ~6 MB y algunos seg)
+# JPEG del instante en todos los eventos (historico visual).
+miniaturas: true
+
+# --- mantenimiento ---------------------------------------------------------
+# 0 = no purgar nunca.
+retencion_dias: 30
+retencion_clips_dias: 14
+retencion_clips_mb: 2048
+mantener_cada_min: 60
+
+# --- extras ----------------------------------------------------------------
+notificar: true
+
+# Segunda pasada de pose (descarga yolo11n-pose.pt la primera vez; baja FPS).
 actividades: true
+
+# Caras: deteccion YuNet + identidad SFace (descarga ~40MB onnx la primera vez).
+# Registras conocidos en la BD (tabla rostros); desconocidos -> evento cara_desconocida.
+caras: true

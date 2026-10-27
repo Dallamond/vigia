@@ -62,3 +62,12 @@ def test_estabilizador_reinicia_con_cambio():
     e.tick("usando PC", 0.0)
     e.tick("sentado", 1.0)
     assert e.tick("sentado", 2.0) is None  # reset al cambiar
+
+
+def test_estabilizador_arranca_sin_petar_con_desconocida():
+    # regresion: `anunciada` no existia hasta el primer cambio de actividad
+    e = EstabilizadorAct(min_seg=1.0)
+    assert e.tick("desconocida", 0.0) is None
+    assert e.tick("desconocida", 5.0) is None  # nunca se anuncia
+    assert e.tick("de pie", 6.0) is None
+    assert e.tick("de pie", 7.5) == "de pie"

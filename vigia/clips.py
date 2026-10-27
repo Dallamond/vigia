@@ -45,10 +45,7 @@ class GuardadorClips:
             if not self._buf:
                 return None
             copia = deque(self._buf, maxlen=self._buf.maxlen)
-            # el contador evita que dos eventos en el mismo segundo se pisen
-            self._secuencia += 1
-            sello = f"{time.strftime('%Y%m%d_%H%M%S')}_{self._secuencia:04d}"
-            nombre = f"{sello}_{_TIPO_SEGURO.sub('_', tipo)}.mp4"
+            nombre = f"{self._sello(tipo)}.mp4"
 
         destino = self.carpeta / nombre
         hilo = threading.Thread(target=self._escribir, args=(copia, destino),
@@ -56,6 +53,31 @@ class GuardadorClips:
         hilo.start()
         self._trabajos = [t for t in self._trabajos if t.is_alive()]
         self._trabajos.append(hilo)
+        return destino
+
+    def _sello(self, tipo: str) -> str:
+        """Nombre unico (segundo + contador) compartido por clips y miniaturas."""
+        self._secuencia += 1
+        base = f"{time.strftime('%Y%m%d_%H%M%S')}_{self._secuencia:04d}"
+        return f"{base}_{_TIPO_SEGURO.sub('_', tipo)}"
+
+    def guardar_miniatura(self, frame: "np.ndarray | None",
+                          tipo: str) -> Path | None:
+        """Guarda un JPEG del instante del evento (barato, ~20 KB)."""
+        if frame is None:
+            return None
+        with self._lock:
+            nombre = f"{self._sello(f'{tipo}_min')}.jpg"
+        destino = self.carpeta / nombre
+        try:
+            ok = cv2.imwrite(str(destino), frame,
+                             [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+        except Exception:
+            log.exception("no se pudo guardar la miniatura %s", nombre)
+            return None
+        if not ok:
+            log.warning("no se pudo guardar la miniatura %s", nombre)
+            return None
         return destino
 
     def _escribir(self, frames: deque[np.ndarray], destino: Path) -> None:
@@ -83,6 +105,8 @@ class GuardadorClips:
 
         Devuelve cuantos se borraron. Evita que clips/ crezca sin limite.
         """
+        if not self.carpeta.exists():
+            return 0
         try:
             ficheros = sorted(self.carpeta.glob("*.mp4"),
                               key=lambda p: p.stat().st_mtime)
@@ -97,6 +121,26 @@ class GuardadorClips:
                 borrados += 1
             except OSError:
                 log.exception("no se pudo borrar el clip %s", f.name)
+        return borrados
+
+    def podar_miniaturas(self, max_ficheros: int = 300) -> int:
+        """Igual que `podar` pero para las miniaturas .jpg."""
+        if not self.carpeta.exists():
+            return 0
+        try:
+            ficheros = sorted(self.carpeta.glob("*.jpg"),
+                              key=lambda p: p.stat().st_mtime)
+        except OSError:
+            log.exception("no se pudieron podar las miniaturas")
+            return 0
+        sobrantes = ficheros[: max(0, len(ficheros) - max_ficheros)]
+        borrados = 0
+        for f in sobrantes:
+            try:
+                f.unlink()
+                borrados += 1
+            except OSError:
+                log.exception("no se pudo borrar la miniatura %s", f.name)
         return borrados
 
     def listar(self) -> list[dict]:

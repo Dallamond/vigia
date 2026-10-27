@@ -69,3 +69,35 @@ def test_valores_validos_se_respetan(tmp_path):
     assert cfg["permanencia_seg"] == 5
     assert cfg["guardar_clips"] is False
     assert cfg["zonas"] == {"puerta": (1, 2, 3, 4)}
+
+
+def test_defaults_incluyen_captura_y_retencion():
+    cfg = cargar_config("no-existe-en-absoluto.yaml")
+    assert cfg["ancho"] == 640 and cfg["alto"] == 480
+    assert cfg["miniaturas"] is True
+    assert cfg["retencion_dias"] > 0
+    assert cfg["retencion_clips_mb"] > 0
+
+
+def test_resolucion_y_retencion_se_acotan(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        ancho: 99999
+        alto: 1
+        retencion_dias: -5
+        mantener_cada_min: 0
+        miniaturas: "si"
+    """), encoding="utf-8")
+    cfg = cargar_config(p)
+    assert cfg["ancho"] == 3840
+    assert cfg["alto"] == 120
+    assert cfg["retencion_dias"] == 0
+    assert cfg["mantener_cada_min"] == 1
+    assert cfg["miniaturas"] is True  # "si" no es booleano yaml -> default
+
+
+def test_resolucion_valida_se_respeta(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("ancho: 1280\nalto: 720\n", encoding="utf-8")
+    cfg = cargar_config(p)
+    assert cfg["ancho"] == 1280 and cfg["alto"] == 720

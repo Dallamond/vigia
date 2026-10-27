@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time as _time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Callable, Iterable
 
@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 class Evento:
     tipo: str
     detalle: str | None = None
+    id: int | None = None  # id en SQLite, para enlazarle miniatura/clip
 
 
 def _cajas_solapan(caja_a, caja_b) -> bool:
@@ -170,8 +171,11 @@ class MotorEventos:
                     ev = Evento("objeto_desaparece", clase)
                     eventos.append(ev)
 
-        # persistir
+        # persistir (devuelve el id para poder enlazar miniatura/video)
+        guardados: list[Evento] = []
         for ev in eventos:
-            self.almacen.guardar(ev.tipo, id_tracking=None, detalle=ev.detalle)
-            log.info("evento %s (%s)", ev.tipo, ev.detalle)
-        return eventos
+            ev_id = self.almacen.guardar(ev.tipo, id_tracking=None,
+                                         detalle=ev.detalle)
+            guardados.append(replace(ev, id=ev_id))
+            log.info("evento %s (%s) id=%s", ev.tipo, ev.detalle, ev_id)
+        return guardados

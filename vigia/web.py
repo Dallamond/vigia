@@ -12,11 +12,15 @@ Arranque: .venv\\Scripts\\python.exe -m vigia.web   →  http://localhost:8000
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 import time
 from collections import deque
+from datetime import date
+from pathlib import Path
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
@@ -25,21 +29,40 @@ from .captura import Camara
 from .clips import GuardadorClips
 from .config import cargar_config
 from .actividades import EstabilizadorAct, clasificar as clasificar_actividad
+from .caras import CarasDetector
 from .detector import Deteccion, Detector
 from .dibujo import dibujar, frame_aviso
 from .eventos import MotorEventos
+from .logs import configurar_logging
+from .mantener import mantener
 from .notificaciones import notificar
 from .pose import PoseDetector, dibujar_pose
 from .tracking import RastreadorPersonas
 
 log = logging.getLogger("vigia.web")
 
+VERSION = "0.7"
+
 _ESPERA_OK = 0.01
 _ESPERA_CAIDA = 2.0
 _ESPERA_ERROR = 0.5
 
-# tipos de evento que justifican clip + notificacion
+# tipos de evento que justifican un clip de video
 _EVENTOS_GRANDES = {"persona_entra", "objeto_desaparece", "permanencia"}
+# tipos que ademas lanzan un aviso de Windows (evita spam al pasar gente)
+_AVISOS = {"permanencia", "objeto_desaparece"}
+
+_EXT_MEDIA = {".mp4": "video/mp4", ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg", ".png": "image/png"}
+
+# fichero donde se persisten los ajustes del dashboard (los tests lo cambian)
+_RUTA_CONFIG = Path("config.yaml")
+
+_INICIO = time.monotonic()
+
+# cooldown para banner "cara nueva" (no spamear el feed)
+_CARA_NUEVA_CADA_SEG = 120.0
+_ULTIMA_CARA_NUEVA = {"t": 0.0}
 
 
 class Estado:
@@ -57,6 +80,9 @@ class Estado:
         self.ids_persona: set[int] = set()
         self.camara_ok = False
         self.eventos: deque = deque(maxlen=50)  # (hora, tipo, etiqueta)
+        # resolucion real de captura (la rellena el bucle)
+        self.ancho = 640
+        self.alto = 480
 
     def actualizar(self, jpeg: bytes | None, fps: float, dets: list[Deteccion],
                    ids_persona: set[int], camara_ok: bool) -> None:
@@ -95,6 +121,39 @@ def _jpeg(frame) -> bytes:
     return buf.tobytes() if ok else b""
 
 
+def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
+                   frame, tipo: str, detalle: str | None = "",
+                   id_tracking: int | None = None,
+                   evento_id: int | None = None) -> int | None:
+    """Unico punto de salida de un evento: persiste, guarda media y publica.
+
+    - si el evento ya existe (motor), se reutiliza su `evento_id`
+    - guarda una miniatura JPEG del frame actual
+    - en los eventos grandes guarda tambien el clip de los ultimos segundos
+    - lanza el aviso de Windows solo para los tipos de `_AVISOS`
+    """
+    if evento_id is None:
+        evento_id = almacen.guardar(tipo, id_tracking=id_tracking,
+                                    detalle=detalle)
+    if clips is not None:
+        miniatura = None
+        if config.get("miniaturas", True):
+            p = clips.guardar_miniatura(frame, tipo)
+            miniatura = p.name if p else None
+        clip = None
+        if tipo in _EVENTOS_GRANDES and config.get("guardar_clips", True):
+            p = clips.guardar(tipo)
+            clip = p.name if p else None
+        try:
+            almacen.anotar_media(evento_id, miniatura=miniatura, clip=clip)
+        except Exception:
+            log.exception("no se pudo enlazar la media del evento %s", evento_id)
+    if tipo in _AVISOS and config.get("notificar", True):
+        notificar(f"Vigia: {tipo}", detalle or "")
+    estado.anadir_evento(tipo, detalle or "")
+    return evento_id
+
+
 def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                         config: dict | None = None,
                         clips: GuardadorClips | None = None,
@@ -105,10 +164,14 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
     cam/detector/motor/clips/parar inyectables para tests.
     """
+    if config is None:
+        config = _config
     if cam is None:
-        cam = Camara(abrir=False)
+        cam = Camara(abrir=False, ancho=int(config.get("ancho", 640)),
+                     alto=int(config.get("alto", 480)))
     ancho = getattr(cam, "ancho", 640)
     alto = getattr(cam, "alto", 480)
+    estado.ancho, estado.alto = ancho, alto
     if detector is None:
         try:
             detector = Detector(conf=0.45)
@@ -124,16 +187,21 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
             return
     if almacen is None:
         almacen = _almacen
-    if config is None:
-        config = _config
     if motor is None:
         motor = _motor_compartido
     if rastreador is None:
         rastreador = RastreadorPersonas(
             timeout_seg=float(config.get("timeout_persona_seg", 10)))
-    zonas = motor.zonas
+    # caras (identidad): carga diferida; desactivacion permanente si falla
+    caras_det: CarasDetector | None = None
+    caras_on = config.get("caras", False)
+    identidades: dict[int, tuple[str, float]] = {}
+    pendiente: dict = {"emb": None, "cuando": 0.0, "imagen": None}
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
+    # la primera pasada de mantenimiento, tras el arranque
+    proximo_mantenimiento = time.monotonic() + 60 * int(
+        config.get("mantener_cada_min", 60) or 60)
     # carga diferida del modelo de pose (segunda descarga en el primer arranque:
     # si falla, seguimos sin pose y avisamos en el log una sola vez)
     pose_det: PoseDetector | None = None
@@ -160,18 +228,14 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                     # coherencia: entra/sale tambien respeta las franjas
                     if motor.fuera_de_franja():
                         continue
-                    almacen.guardar(tipo, id_tracking=pid)
-                    estado.anadir_evento(tipo, f"id {pid}")
+                    _anotar_evento(estado, almacen, clips, config, frame,
+                                   tipo, f"id {pid}", id_tracking=pid)
                 mapa_ids = {ids_idx[i]: d.caja for i, d in enumerate(dets)
                             if d.es_persona and i in ids_idx}
                 extras = [d for d in dets if not d.es_persona]
                 for ev in motor.procesar(dets, mapa_ids, extras):
-                    estado.anadir_evento(ev.tipo, ev.detalle or "")
-                    if ev.tipo in _EVENTOS_GRANDES:
-                        if config.get("guardar_clips", True) and clips:
-                            clips.guardar(ev.tipo)
-                        if config.get("notificar", True):
-                            notificar(f"Vigia: {ev.tipo}", ev.detalle or "")
+                    _anotar_evento(estado, almacen, clips, config, frame,
+                                   ev.tipo, ev.detalle, evento_id=ev.id)
 
                 # actividades: segunda pasada de pose + clasificacion por persona
                 if pose_exploro and pose_det is None:
@@ -193,34 +257,97 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                                 actividades[p.track_id] = est
                             anuncio = est.tick(act, time.time())
                             if anuncio:
-                                almacen.guardar("actividad",
-                                                id_tracking=p.track_id,
-                                                detalle=anuncio)
-                                estado.anadir_evento(
-                                    "actividad", f"id {p.track_id} {anuncio}")
+                                _anotar_evento(
+                                    estado, almacen, clips, config, frame,
+                                    "actividad", f"id {p.track_id} {anuncio}",
+                                    id_tracking=p.track_id)
                             vistos.add(p.track_id)
                         for pid in list(actividades):
                             if pid not in vistos:
                                 del actividades[pid]
                         dibujar_pose(frame, poses)
-                        # publicar para /actividades
-                        _actividades_personas.clear()
-                        for pid, est in actividades.items():
-                            _actividades_personas[pid] = est.actual
+                        # publicar para /actividades (con cerrojo: lo lee la web)
+                        with _act_lock:
+                            _actividades_personas.clear()
+                            for pid, est in actividades.items():
+                                _actividades_personas[pid] = est.actual
                     except Exception:
                         log.exception("error en pose/actividades (se sigue)")
+
+                # caras: identidad por persona (YuNet + SFace, local)
+                if caras_on and caras_det is None:
+                    try:
+                        caras_det = CarasDetector()
+                        caras_det.set_conocidos({
+                            r["nombre"]:
+                                np.frombuffer(r["embedding"], dtype=np.float32)
+                            for r in almacen.rostros()})
+                        caras_det.recargar = False
+                    except Exception:
+                        caras_on = False
+                        log.warning("caras desactivadas: modelos no disponibles")
+                if caras_on and caras_det is not None:
+                    try:
+                        # la UI pudo cambiar el registro: recargar conocidos
+                        if bucle_caras_recarga.is_set():
+                            bucle_caras_recarga.clear()
+                            caras_det.set_conocidos({
+                                r["nombre"]:
+                                    np.frombuffer(r["embedding"],
+                                                  dtype=np.float32)
+                                for r in almacen.rostros()})
+                        for cara in caras_det.detectar(frame):
+                            x1, y1, x2, y2 = cara["caja"]
+                            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                            # cara -> persona: centro de la cara dentro de su caja
+                            pid_asoc = None
+                            for pid, caja in mapa_ids.items():
+                                if (caja[0] - 10 <= cx <= caja[2] + 10
+                                        and caja[1] - 10 <= cy <= caja[3] + 10):
+                                    pid_asoc = pid
+                                    break
+                            if pid_asoc is None:
+                                continue
+                            nombre, sim = caras_det.identificar(cara["emb"])
+                            identidades[pid_asoc] = (nombre, sim)
+                            if nombre is not None:
+                                cv2.putText(frame, f"{nombre} {sim:.0%}",
+                                            (x1, y1 - 6),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                            (80, 220, 120), 2, cv2.LINE_AA)
+                            elif cara["conf"] >= 0.7 and \
+                                    time.time() - _ULTIMA_CARA_NUEVA["t"] \
+                                    >= _CARA_NUEVA_CADA_SEG:
+                                _ULTIMA_CARA_NUEVA["t"] = time.time()
+                                _anotar_evento(
+                                    estado, almacen, clips, config, frame,
+                                    "cara_desconocida",
+                                    f"id {pid_asoc} sin identificar",
+                                    id_tracking=pid_asoc)
+                    except Exception:
+                        log.exception("error en caras (se sigue)")
 
                 dt = time.perf_counter() - t0
                 fps_hist.append(1.0 / dt if dt > 0 else 0.0)
                 fps_ultimo = sum(fps_hist) / len(fps_hist)
                 ids_dentro = rastreador.ids_dentro()
+                # leer las zonas del motor en cada frame: el editor las cambia
+                # en caliente y no deben quedarse congeladas hasta reiniciar
                 dibujar(frame, dets, fps_ultimo, pie=None,
                         ids_por_indice=ids_idx, ids_persona=ids_dentro,
-                        zonas=zonas)
+                        zonas=motor.zonas)
                 if clips:
                     clips.meter(frame)
                 estado.actualizar(_jpeg(frame), fps_ultimo, dets,
                                   ids_dentro, True)
+
+                if time.monotonic() >= proximo_mantenimiento:
+                    proximo_mantenimiento = time.monotonic() + 60 * int(
+                        config.get("mantener_cada_min", 60) or 60)
+                    try:
+                        mantener(almacen, clips, config)
+                    except Exception:
+                        log.exception("fallo en el mantenimiento periodico")
                 espera = _ESPERA_OK
         except Exception:
             # el hilo no debe morir: se avisa en el dashboard y se reintenta
@@ -248,181 +375,29 @@ _motor_compartido = MotorEventos(_almacen, config=_config)
 _rastreador_compartido = RastreadorPersonas(
     timeout_seg=float(_config.get("timeout_persona_seg", 10)))
 
-_PAGINA = """<!doctype html>
-<html lang="es"><head><meta charset="utf-8">
-<title>Vigia</title>
-<style>
-  body{font-family:system-ui;background:#111;color:#eee;margin:0}
-  header{display:flex;align-items:center;gap:10px;padding:10px 16px}
-  header h1{margin:0;font-weight:600;font-size:1.35rem}
-  header .btn{margin-left:auto;background:#2a2a2a;border:1px solid #444;
-    color:#eee;border-radius:8px;padding:6px 14px;cursor:pointer}
-  header .btn:hover{background:#3a3a3a}
-  .layout{display:grid;grid-template-columns:minmax(0,62%) minmax(280px,38%);
-          gap:12px;padding:0 16px}
-  .video-wrap img{width:100%;border:1px solid #333;border-radius:8px;display:block}
-  #estado{margin:8px 0;font-size:.95rem;color:#9cf}
-  .col .sec{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;
-            padding:8px;margin-bottom:10px;font-size:.9rem;max-height:340px;
-            overflow-y:auto}
-  #feed div,#hist div{background:#141414;border:1px solid #2c2c2c;border-radius:6px;
-            padding:6px 10px;margin-top:4px}
-  .entra{color:#8f8} .salio{color:#f88}
-  span.badge{background:#222;border:1px solid #444;border-radius:999px;
-             padding:4px 12px;margin:0 4px;display:inline-block}
-  select,input,textarea{background:#222;color:#eee;border:1px solid #444;
-             border-radius:6px;padding:4px;font-size:.9rem}
-  .sec a{color:#9cf}
-  #abajo{margin:12px 16px 20px;background:#151515;border:1px dashed #333;
-         border-radius:8px;padding:12px;min-height:110px}
-  #abajo h3{margin:0 0 6px;font-size:1rem}
-  #modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
-         align-items:center;justify-content:center;z-index:10}
-  #modal .caja{background:#1d1d1d;border:1px solid #444;border-radius:10px;
-         padding:16px;width:520px;max-width:94vw;max-height:88vh;overflow-y:auto}
-  #modal label{display:block;margin:10px 0 4px;font-size:.85rem;color:#bbb}
-  #modal .fila{display:flex;gap:8px;align-items:center;margin-bottom:4px}
-  .ok{color:#8f8} .err{color:#f88}
-</style></head>
-<body>
-<header>
-  <h1>🛡 Vigia</h1>
-  <button class="btn" onclick="abrirAjustes()">⚙ Ajustes</button>
-</header>
+_RUTA_PANEL = Path(__file__).parent / "static" / "index.html"
+_PAGINA_MINIMA = ("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">"
+                  "<title>Vigia</title></head><body><h1>Vigia</h1>"
+                  "<p>Falta <code>vigia/static/index.html</code>.</p>"
+                  "</body></html>")
 
-<div class="layout">
-  <div class="video-wrap">
-    <img src="/video.mjpg" alt="stream">
-    <div id="estado">cargando…</div>
-  </div>
-  <div class="col">
-    <div class="sec" id="feed"></div>
-    <div class="sec">
-      <b>Historial (SQLite)</b><br>
-      <select id="ftipo"><option value="">todos</option>
-        <option>persona_entra</option><option>persona_salio</option>
-        <option>permanencia</option><option>actividad</option>
-        <option>objeto_aparece</option><option>objeto_desaparece</option></select>
-      desde: <input id="fdesde" placeholder="2026-10-27" size="10">
-      <div id="hist"></div>
-    </div>
-    <div class="sec" id="clipssec"><b>Clips</b><div id="clips">—</div></div>
-  </div>
-</div>
 
-<div id="abajo">
-  <h3>📊 Actividades y métricas (panel en construcción)</h3>
-  <div id="actividades">cargando…</div>
-  <div class="badge">Espacio reservado: pose, métricas y futura base de escalada</div>
-</div>
+def _leer_panel() -> str:
+    """Panel nuevo desde disco; si falta, una pagina minima que no rompe."""
+    try:
+        return _RUTA_PANEL.read_text(encoding="utf-8")
+    except OSError:
+        log.warning("no se encontro %s; se sirve el panel minimo", _RUTA_PANEL)
+        return _PAGINA_MINIMA
 
-<div id="modal" onclick="if(event.target===this)cerrarAjustes()">
-  <div class="caja">
-    <h3 style="margin-top:0">⚙ Ajustes</h3>
-    <label>Permanencia (seg antes de avisar)</label>
-    <input id="a_permanencia" type="number" min="1" max="3600" size="6">
-    <label>Persona sin verse = salida (seg)</label>
-    <input id="a_timeout_persona" type="number" min="1" max="3600" size="6">
-    <label>Objeto ausente = desaparece (seg)</label>
-    <input id="a_timeout_objeto" type="number" min="1" max="3600" size="6">
-    <label>Clases vigiladas (desaparición, separadas por comas)</label>
-    <input id="a_vigiladas" size="40">
-    <label>Zonas (JSON: {"puerta":[0,0,120,300]})</label>
-    <textarea id="a_zonas" rows="4" style="width:100%"></textarea>
-    <label>Franjas activas (JSON: [{"desde":"22:00","hasta":"08:00"}])</label>
-    <textarea id="a_franjas" rows="3" style="width:100%"></textarea>
-    <label><input id="a_clips" type="checkbox"> guardar clips</label>
-    <label><input id="a_notificar" type="checkbox"> notificar (toast Windows)</label>
-    <label><input id="a_actividades" type="checkbox"> detectar actividades</label><br>
-    <button class="btn" onclick="guardarAjustes()">Guardar</button>
-    <button class="btn" onclick="cerrarAjustes()">Cancelar</button>
-    <span id="ajustes_msg"></span>
-  </div>
-</div>
 
-<script>
-function esc(t){ return encodeURIComponent(String(t ?? ''));
-}
-function escH(t){
-  return String(t ?? '').replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-function abrirAjustes(){ document.getElementById('modal').style.display='flex'; cargarAjustes(); }
-function cerrarAjustes(){ document.getElementById('modal').style.display='none'; }
-async function cargarAjustes(){
-  try{
-    const c = await (await fetch('/config')).json();
-    a_permanencia.value = c.permanencia_seg ?? 30;
-    a_timeout_persona.value = c.timeout_persona_seg ?? 10;
-    a_timeout_objeto.value = c.timeout_objeto_seg ?? 10;
-    a_vigiladas.value = (c.vigilar_desaparicion||[]).join(', ');
-    a_zonas.value = JSON.stringify(c.zonas || {});
-    a_franjas.value = JSON.stringify(c.franjas || []);
-    a_clips.checked = !!c.guardar_clips;
-    a_notificar.checked = !!c.notificar;
-    a_actividades.checked = !!c.actividades;
-  }catch(e){}
-}
-async function guardarAjustes(){
-  const msg = document.getElementById('ajustes_msg');
-  try{
-    const cuerpo = {
-      permanencia_seg: +a_permanencia.value,
-      timeout_persona_seg: +a_timeout_persona.value,
-      timeout_objeto_seg: +a_timeout_objeto.value,
-      vigilar_desaparicion: a_vigiladas.value.split(',').map(s=>s.trim()).filter(Boolean),
-      zonas: JSON.parse(a_zonas.value || '{}'),
-      franjas: JSON.parse(a_franjas.value || '[]'),
-      guardar_clips: a_clips.checked,
-      notificar: a_notificar.checked,
-      actividades: a_actividades.checked
-    };
-    const r = await fetch('/config', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(cuerpo)});
-    const res = await r.json();
-    msg.className = res.ok ? 'ok' : 'err';
-    msg.textContent = res.ok ? '✅ aplicado y guardado' : '❌ no se guardó en yaml';
-    if(res.ok) setTimeout(cerrarAjustes, 700);
-  }catch(e){ msg.className='err'; msg.textContent='❌ ' + e.message; }
-}
-async function tick(){
-  try{
-    const [er,ev,ec] = await Promise.all([
-      fetch('/estado'), fetch('/eventos'), fetch('/clips')]);
-    const s = await er.json(); const l = await ev.json(); const cs = await ec.json();
-    estado.innerHTML = `<span class="badge">camara ${s.camara_ok ? '✅' : '❌'}</span>
-      <span class="badge">FPS ${s.fps.toFixed(1)}</span>
-      <span class="badge">personas ahora ${s.personas}</span>
-      <span class="badge">objetos ${s.objetos}</span>`;
-    feed.innerHTML = '';
-    for(const e of l){
-      const d = document.createElement('div');
-      d.className = e.tipo.includes('entra') || e.tipo.includes('aparece') ? 'entra' : 'salio';
-      d.textContent = `${e.hora} — ${e.tipo} ${e.etiqueta}`;
-      feed.appendChild(d);
-    }
-    const ftipo = document.getElementById('ftipo').value;
-    const desde = document.getElementById('fdesde').value.trim();
-    const r = await fetch('/historial?limite=15' + (ftipo?`&tipo=${ftipo}`:'') + (desde?`&desde=${desde}`:''));
-    const h = await r.json();
-    hist.innerHTML = h.map(e=>`<div>${escH(e.marca_sistema)} — ${escH(e.tipo)}${e.detalle?' ('+escH(e.detalle)+')':''}${e.id_tracking!=null?' id '+escH(e.id_tracking):''}</div>`).join('');
-    clips.innerHTML = cs.length
-      ? cs.slice(0,10).map(c=>`<div><a href="/clip/${escH(c.fichero)}" target="_blank">${escH(c.fichero)}</a> <small>(${Math.round(c.tamano/1024)} KB, ${escH(c.cuando)})</small></div>`).join('')
-      : '<small>sin clips aún</small>';
-    const ra = await fetch('/actividades'); const acts = await ra.json();
-    actividades.innerHTML = Object.keys(acts).length
-      ? Object.entries(acts).map(([k,v])=>`<span class="badge">persona #${k}: ${escH(v)}</span>`).join('')
-      : '<small>sin personas ni actividades ahora</small>';
-  }catch(e){}
-}
-setInterval(tick, 700); tick();
-</script></body></html>"""
+_PAGINA = _leer_panel()
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return _PAGINA
+    # se relee en cada visita: editar el panel no exige reiniciar el servidor
+    return _leer_panel()
 
 
 @app.get("/video.mjpg")
@@ -449,7 +424,18 @@ def estado_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
     _, fps, dets, ids_persona, ok = estado.snapshot()
     return {"fps": fps, "camara_ok": ok, "personas": len(ids_persona),
-            "objetos": sum(1 for d in dets if not d.es_persona)}
+            "objetos": sum(1 for d in dets if not d.es_persona),
+            "ancho": estado.ancho, "alto": estado.alto}
+
+
+@app.get("/snapshot.jpg")
+def snapshot() -> Response:
+    """Ultimo frame como JPEG (fondo del editor de zonas)."""
+    jpeg, *_ = estado.snapshot()
+    if not jpeg:
+        raise HTTPException(404, "todavia no hay imagen")
+    return Response(content=jpeg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/eventos")
@@ -488,21 +474,179 @@ def clips_json(response: Response) -> list[dict]:
     return _clips.listar()
 
 
+@app.get("/media/{fichero}")
+def media(fichero: str):
+    """Sirve un clip (.mp4) o una miniatura (.jpg) de la carpeta de media."""
+    if _clips is None:
+        raise HTTPException(404, "media desactivada")
+    carpeta = _clips.carpeta.resolve()
+    ruta = (carpeta / fichero).resolve()
+    tipo = _EXT_MEDIA.get(ruta.suffix.lower())
+    if ruta.parent != carpeta or tipo is None or not ruta.is_file():
+        raise HTTPException(404, "fichero no encontrado")
+    return FileResponse(ruta, media_type=tipo)
+
+
+@app.get("/timeline")
+def timeline_json(response: Response, dia: str | None = None,
+                  limite: int = 2000) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    dia = dia or date.today().isoformat()
+    eventos = _almacen.eventos_del_dia(dia, limite=limite)
+    return {"dia": dia, "total": len(eventos), "eventos": eventos}
+
+
+@app.get("/salud")
+def salud_json(response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    clips = _clips.listar() if _clips is not None else []
+    raiz = _clips.carpeta if _clips is not None else Path(".")
+    try:
+        uso = shutil.disk_usage(str(raiz))
+        libre_gb = uso.free / 1024 ** 3
+        total_gb = uso.total / 1024 ** 3
+    except OSError:
+        libre_gb = total_gb = 0.0
+    try:
+        eventos = _almacen.contar()
+        ultimo = _almacen.ultimo_evento()
+        db_bytes = _almacen.tamano_bytes()
+    except Exception:
+        log.exception("no se pudo leer el estado de la BD")
+        eventos, ultimo, db_bytes = 0, None, 0
+    return {
+        "version": VERSION,
+        "uptime_seg": int(time.monotonic() - _INICIO),
+        "camara_ok": estado.camara_ok,
+        "fps": round(estado.fps, 1),
+        "eventos": eventos,
+        "ultimo_evento": ultimo,
+        "db_bytes": db_bytes,
+        "clips": {"n": len(clips),
+                  "bytes": sum(int(c.get("tamano", 0)) for c in clips)},
+        "disco_libre_gb": round(libre_gb, 1),
+        "disco_total_gb": round(total_gb, 1),
+    }
+
+
+@app.get("/zonas")
+def zonas_json(response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return {"zonas": {k: list(v) for k, v in _motor_compartido.zonas.items()},
+            "ancho": estado.ancho, "alto": estado.alto}
+
+
+@app.put("/zonas")
+async def zonas_guardar(datos: dict) -> dict:
+    """Zonas desde el editor visual: se aplican en caliente y se persisten."""
+    try:
+        return await config_guardar({"zonas": (datos or {}).get("zonas", {})})
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail}
+
+
 @app.get("/actividades")
 def actividades_json(response: Response) -> dict:
     """Mapa id_tracking -> actividad actual (usando PC, durmiendo...)."""
     response.headers["Cache-Control"] = "no-store"
-    with estado.cerradura:
+    with _act_lock:
         return dict(_actividades_personas)
 
 
 # publicacion del hilo -> endpoint: {pid: actividad string}
 _actividades_personas: dict[int, str] = {}
+_act_lock = threading.Lock()
+
+
+# -- registro de caras (fase 7) ------------------------------------------------
+@app.get("/caras/registro")
+def caras_registro(response: Response) -> list[dict]:
+    """Personas conocidas: id y nombre (los embeddings no se exponen)."""
+    response.headers["Cache-Control"] = "no-store"
+    return [{"id": r["id"], "nombre": r["nombre"]}
+            for r in _almacen.rostros()]
+
+
+@app.post("/caras/registro")
+async def caras_registrar(datos: dict) -> dict:
+    """Registra o renombra a una persona conocida.
+
+    {nombre, embedding: [float...]} -> registra nueva identidad
+    {nombre, id}                    -> renombra la entrada id
+    """
+    datos = datos or {}
+    nombre = str(datos.get("nombre", "")).strip()
+    if not nombre:
+        raise HTTPException(400, "falta el nombre")
+    if datos.get("id") is not None:
+        id_entrada = int(datos["id"])
+        existentes = {r["id"]: r for r in _almacen.rostros()}
+        if id_entrada not in existentes:
+            raise HTTPException(404, "entrada no encontrada")
+        _almacen.guardar_rostro(
+            nombre, bytes(existentes[id_entrada]["embedding"]))
+        _almacen.borrar_rostro(id_entrada)
+    elif datos.get("embedding") is not None:
+        emb = np.asarray(datos["embedding"], dtype=np.float32)
+        _almacen.guardar_rostro(nombre, emb.tobytes())
+    else:
+        raise HTTPException(400, "falta 'embedding' o 'id'")
+    _marcar_recarga_caras()
+    return {"ok": True}
+
+
+@app.delete("/caras/registro/{id_entrada}")
+def caras_borrar(id_entrada: int) -> dict:
+    if not _almacen.borrar_rostro(id_entrada):
+        raise HTTPException(404, "entrada no encontrada")
+    _marcar_recarga_caras()
+    return {"ok": True}
+
+
+def _marcar_recarga_caras() -> None:
+    """El bucle recarga el registro de conocidos en el siguiente frame."""
+    bucle_caras_recarga.set()
+
+
+# evento del bucle: recargar conocidos (se consulta con getattr si el hilo
+# corrio antes de que existiera esta variable)
+bucle_caras_recarga = threading.Event()
 
 
 # -- ajustes ------------------------------------------------------------------
-_AJUSTES_NUM = ("permanencia_seg", "timeout_objeto_seg", "timeout_persona_seg")
-_AJUSTES_BOOL = ("guardar_clips", "notificar", "actividades")
+_AJUSTES_NUM = ("permanencia_seg", "timeout_objeto_seg", "timeout_persona_seg",
+                "ancho", "alto", "retencion_dias", "retencion_clips_dias",
+                "retencion_clips_mb", "mantener_cada_min")
+_RANGOS = {
+    "permanencia_seg": (1, 3600),
+    "timeout_objeto_seg": (1, 3600),
+    "timeout_persona_seg": (1, 3600),
+    "ancho": (160, 3840),
+    "alto": (120, 2160),
+    "retencion_dias": (0, 3650),
+    "retencion_clips_dias": (0, 3650),
+    "retencion_clips_mb": (0, 1024 * 1024),
+    "mantener_cada_min": (1, 1440),
+}
+_AJUSTES_BOOL = ("guardar_clips", "notificar", "actividades", "miniaturas",
+                 "caras")
+_AJUSTES_LISTA = ("vigilar_desaparicion", "zonas", "franjas")
+# ancho/alto solo se leen al crear la camara: hace falta reiniciar
+_REQUIEREN_REINICIO = ("ancho", "alto")
+
+
+def _a_bool(valor, clave: str) -> bool:
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        return bool(valor)
+    if isinstance(valor, str):
+        texto = valor.strip().lower()
+        if texto in ("1", "true", "si", "sí", "yes", "on"):
+            return True
+        if texto in ("0", "false", "no", "off", ""):
+            return False
+    raise ValueError(f"{clave} debe ser booleano")
 
 
 @app.get("/config")
@@ -517,15 +661,19 @@ def config_json(response: Response) -> dict:
 @app.post("/config")
 async def config_guardar(datos: dict) -> dict:
     """Aplica ajustes al sistema en caliente y los guarda en config.yaml."""
+    datos = dict(datos or {})
     try:
         for k in _AJUSTES_NUM:
-            if k in datos:
-                v = int(datos[k])
-                if v < 1 or v > 3600:
-                    raise ValueError(f"{k} fuera de rango")
+            if k not in datos:
+                continue
+            v = int(float(datos[k]))
+            minimo, maximo = _RANGOS[k]
+            if not minimo <= v <= maximo:
+                raise ValueError(f"{k} fuera de rango ({minimo}..{maximo})")
+            datos[k] = v
         for k in _AJUSTES_BOOL:
             if k in datos:
-                datos[k] = bool(datos[k])
+                datos[k] = _a_bool(datos[k], k)
         if "vigilar_desaparicion" in datos:
             if not isinstance(datos["vigilar_desaparicion"], list) or not all(
                     isinstance(x, str) for x in datos["vigilar_desaparicion"]):
@@ -551,7 +699,7 @@ async def config_guardar(datos: dict) -> dict:
                     raise ValueError("franja debe ser dict desde/hasta")
                 _dt.strptime(str(f.get("desde", "")), "%H:%M")
                 _dt.strptime(str(f.get("hasta", "")), "%H:%M")
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
 
     # aplicar en caliente
@@ -570,25 +718,32 @@ async def config_guardar(datos: dict) -> dict:
     if "timeout_persona_seg" in datos:
         _rastreador_compartido.timeout_seg = float(datos["timeout_persona_seg"])
 
-    # persistir en config.yaml
+    # persistir en config.yaml (el dict _config lo lee el bucle en vivo)
     import yaml
     _config.update({k: v for k, v in datos.items()
-                    if k in _AJUSTES_NUM + _AJUSTES_BOOL
-                    or k in ("vigilar_desaparicion", "zonas", "franjas")})
+                    if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA})
     try:
-        yaml.safe_dump(_config, open("config.yaml", "w", encoding="utf-8"),
-                       allow_unicode=True, sort_keys=False)
+        with open(_RUTA_CONFIG, "w", encoding="utf-8") as f:
+            yaml.safe_dump(_config, f, allow_unicode=True, sort_keys=False)
     except OSError:
         log.exception("no se pudo guardar config.yaml (ajustes en memoria igual)")
         return {"ok": False, "guardado": False}
-    return {"ok": True, "guardado": True}
+    return {"ok": True, "guardado": True,
+            "reinicio": any(k in datos for k in _REQUIEREN_REINICIO)}
 
 
 def main() -> None:
+    import os
+
     import uvicorn
 
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    ruta_log = configurar_logging()
+    log.info("log en %s", ruta_log or "consola")
+    host = os.environ.get("VIGIA_HOST", "127.0.0.1")
+    try:
+        puerto = int(os.environ.get("VIGIA_PUERTO", "8000"))
+    except ValueError:
+        puerto = 8000
     parar = threading.Event()
     hilo = threading.Thread(
         target=bucle_procesamiento,
@@ -596,9 +751,9 @@ def main() -> None:
         kwargs={"parar": parar, "motor": _motor_compartido,
                 "rastreador": _rastreador_compartido}, daemon=True)
     hilo.start()
-    log.info("Dashboard en http://localhost:8000")
+    log.info("Dashboard en http://%s:%d", host, puerto)
     try:
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+        uvicorn.run(app, host=host, port=puerto, log_level="warning")
     finally:
         # parar el bucle antes de cerrar la BD: si no, el hilo sigue
         # escribiendo sobre una conexion cerrada hasta que muere el proceso

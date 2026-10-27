@@ -42,7 +42,8 @@ def clasificar(p: PersonaPose, objetos: Sequence) -> str:
 
         # tumbado/durmiendo: torso horizontal (hombros y caderas a misma altura)
         if abs(f["hy"] - f["cy"]) < 0.5 * max(f["box_h"], 1) \
-                and f["w"] > f["box_h"] * 1.05 and f["box_h"] < _SENTADO * 0.4:            return "durmiendo"
+                and f["w"] > f["box_h"] * 1.05 and f["box_h"] < _SENTADO * 0.4:
+            return "durmiendo"
 
         # sentado: rodillas visibles y elevadas (por encima o cerca de caderas)
         sentado = f["ky"] is not None and f["ky"] < f["cy"] + 10
@@ -70,6 +71,8 @@ class EstabilizadorAct:
         self.min_seg = min_seg
         self.actual = "desconocida"
         self.desde = 0.0
+        # sin esto, el primer tick con actividad "desconocida" peta
+        self.anunciada = False
 
     def tick(self, actividad: str, ahora: float) -> str | None:
         """Acepta la lectura del frame; devuelve la actividad si acaba de estabilizar."""

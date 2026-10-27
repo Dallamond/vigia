@@ -1,10 +1,14 @@
-"""Almacenamiento de eventos en SQLite sin dependencias externas."""
+"""Almacenamiento de eventos en SQLite sin dependencias externas.
+
+El esquema se migra solo: las bases de datos creadas por versiones anteriores
+reciben las columnas nuevas (`miniatura`, `clip`) al abrirse.
+"""
 from __future__ import annotations
 
 import logging
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -20,7 +24,23 @@ CREATE TABLE IF NOT EXISTS eventos (
 );
 CREATE INDEX IF NOT EXISTS idx_eventos_tiempo ON eventos(marca_sistema);
 CREATE INDEX IF NOT EXISTS idx_eventos_tipo ON eventos(tipo);
+CREATE TABLE IF NOT EXISTS rostros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    creado DATETIME NOT NULL
+);
 """
+
+# columnas anadidas despues de la v1: se crean si faltan (migracion simple)
+_COLUMNAS_NUEVAS = {
+    "miniatura": "TEXT",  # fichero .jpg del momento del evento
+    "clip": "TEXT",       # fichero .mp4 asociado (si lo hay)
+}
+
+_FORMATO = "%Y-%m-%d %H:%M:%S"
+_COLS = ("id", "marca_sistema", "marca_pantalla", "tipo", "id_tracking",
+         "detalle", "miniatura", "clip")
 
 
 class Almacen:
@@ -39,20 +59,53 @@ class Almacen:
         except sqlite3.Error as e:
             log.warning("no se pudo activar WAL en %s: %s", self.ruta, e)
         self.con.executescript(_ESQUEMA)
+        self._migrar()
         self.con.commit()
         log.info("BD abierta: %s", self.ruta.resolve())
 
+    # -- esquema ----------------------------------------------------------
+    def _migrar(self) -> None:
+        columnas = {f[1] for f in self.con.execute("PRAGMA table_info(eventos)")}
+        for nombre, tipo in _COLUMNAS_NUEVAS.items():
+            if nombre not in columnas:
+                self.con.execute(
+                    f"ALTER TABLE eventos ADD COLUMN {nombre} {tipo}")
+                log.info("BD migrada: columna %s anadida", nombre)
+        self.con.execute("PRAGMA user_version=2")
+
+    # -- escritura --------------------------------------------------------
     def guardar(self, tipo: str, id_tracking: int | None = None,
-                detalle: str | None = None) -> None:
-        ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        pantalla = datetime.now().strftime("%H:%M:%S")
+                detalle: str | None = None,
+                miniatura: str | None = None,
+                clip: str | None = None,
+                cuando: str | None = None) -> int:
+        """Inserta un evento y devuelve su id (para enlazarle media)."""
+        momento = datetime.now() if cuando is None else datetime.strptime(
+            cuando, _FORMATO)
+        ahora = momento.strftime(_FORMATO)
+        pantalla = momento.strftime("%H:%M:%S")
+        with self._lock:
+            cur = self.con.execute(
+                "INSERT INTO eventos (marca_sistema, marca_pantalla, tipo, "
+                "id_tracking, detalle, miniatura, clip) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ahora, pantalla, tipo, id_tracking, detalle, miniatura, clip))
+            self.con.commit()
+            return int(cur.lastrowid or 0)
+
+    def anotar_media(self, evento_id: int | None, miniatura: str | None = None,
+                     clip: str | None = None) -> None:
+        """Enlaza la miniatura/clip a un evento ya guardado."""
+        if not evento_id or (miniatura is None and clip is None):
+            return
         with self._lock:
             self.con.execute(
-                "INSERT INTO eventos (marca_sistema, marca_pantalla, tipo, id_tracking, detalle) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (ahora, pantalla, tipo, id_tracking, detalle))
+                "UPDATE eventos SET miniatura = COALESCE(?, miniatura), "
+                "clip = COALESCE(?, clip) WHERE id = ?",
+                (miniatura, clip, evento_id))
             self.con.commit()
 
+    # -- lectura ----------------------------------------------------------
     def historial(self, limite: int = 100, tipo: str | None = None,
                   desde: str | None = None) -> list[dict]:
         """Devuelve los últimos eventos, filtrables por tipo y fecha (ISO)."""
@@ -61,8 +114,7 @@ class Almacen:
         except (TypeError, ValueError):
             limite = 100
         limite = max(1, min(limite, 500))
-        vez = "SELECT id, marca_sistema, marca_pantalla, tipo, id_tracking, detalle "
-        q = vez + "FROM eventos WHERE 1=1"
+        q = (f"SELECT {', '.join(_COLS)} FROM eventos WHERE 1=1")
         args: list = []
         if tipo:
             q += " AND tipo = ?"
@@ -74,13 +126,98 @@ class Almacen:
         args.append(limite)
         with self._lock:
             filas = self.con.execute(q, args).fetchall()
-        cols = ["id", "marca_sistema", "marca_pantalla", "tipo", "id_tracking", "detalle"]
-        return [dict(zip(cols, f)) for f in filas]
+        return [dict(zip(_COLS, f)) for f in filas]
+
+    def eventos_del_dia(self, dia: str, limite: int = 2000) -> list[dict]:
+        """Eventos de un dia (YYYY-MM-DD) en orden cronologico (timeline)."""
+        try:
+            datetime.strptime(dia, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return []
+        limite = max(1, min(int(limite or 2000), 5000))
+        with self._lock:
+            filas = self.con.execute(
+                f"SELECT {', '.join(_COLS)} FROM eventos "
+                "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                "ORDER BY marca_sistema ASC, id ASC LIMIT ?",
+                (f"{dia} 00:00:00", f"{dia} 23:59:59", limite)).fetchall()
+        return [dict(zip(_COLS, f)) for f in filas]
+
+    def contar(self) -> int:
+        with self._lock:
+            return int(self.con.execute(
+                "SELECT COUNT(*) FROM eventos").fetchone()[0])
+
+    def ultimo_evento(self) -> str | None:
+        with self._lock:
+            fila = self.con.execute(
+                "SELECT marca_sistema FROM eventos ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return fila[0] if fila else None
+
+    def tamano_bytes(self) -> int:
+        """Tamano de la BD incluyendo los ficheros auxiliares de WAL."""
+        total = 0
+        for sufijo in ("", "-wal", "-shm"):
+            try:
+                total += Path(str(self.ruta) + sufijo).stat().st_size
+            except OSError:
+                pass
+        return total
+
+    # -- mantenimiento ----------------------------------------------------
+    def purgar_eventos(self, dias: int) -> int:
+        """Borra eventos mas antiguos que `dias`. Devuelve cuantos borro."""
+        try:
+            dias = int(dias)
+        except (TypeError, ValueError):
+            return 0
+        if dias <= 0:
+            return 0
+        corte = (datetime.now() - timedelta(days=dias)).strftime(_FORMATO)
+        with self._lock:
+            cur = self.con.execute(
+                "DELETE FROM eventos WHERE marca_sistema < ?", (corte,))
+            self.con.commit()
+            borrados = int(cur.rowcount or 0)
+        if borrados:
+            log.info("purgados %d eventos anteriores a %s", borrados, corte)
+            try:
+                self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
+        return borrados
 
     def limpiar(self) -> None:
         with self._lock:
             self.con.execute("DELETE FROM eventos")
             self.con.commit()
+
+    # -- rostros (identidad) ------------------------------------------------
+    def guardar_rostro(self, nombre: str, embedding: bytes) -> int:
+        """Registra una identidad conocida. Devuelve su id."""
+        creado = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            cur = self.con.execute(
+                "INSERT INTO rostros (nombre, embedding, creado) VALUES (?, ?, ?)",
+                (nombre, bytes(embedding), creado))
+            self.con.commit()
+            return int(cur.lastrowid or 0)
+
+    def rostros(self) -> list[dict]:
+        """Identidades conocidas (id, nombre, embedding como bytes)."""
+        with self._lock:
+            filas = self.con.execute(
+                "SELECT id, nombre, embedding FROM rostros ORDER BY id").fetchall()
+        return [{"id": i, "nombre": n, "embedding": e} for i, n, e in filas]
+
+    def borrar_rostro(self, id_rostro: int) -> bool:
+        """Elimina una identidad por id. Devuelve si existia."""
+        with self._lock:
+            cur = self.con.execute("DELETE FROM rostros WHERE id = ?",
+                                   (int(id_rostro),))
+            self.con.commit()
+        return (cur.rowcount or 0) > 0
 
     def cerrar(self) -> None:
         """Cierra la conexion. Se puede llamar mas de una vez sin fallar."""

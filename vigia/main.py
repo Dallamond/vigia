@@ -13,15 +13,15 @@ import cv2
 from .captura import Camara
 from .detector import Detector
 from .dibujo import dibujar, frame_aviso
+from .logs import configurar_logging
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vigia")
 
 _CONF = 0.45
 
 
 def main() -> None:
+    configurar_logging()
     cam = Camara(abrir=False)
     try:
         detector = Detector(conf=_CONF)

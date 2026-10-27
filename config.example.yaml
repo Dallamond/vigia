@@ -1,10 +1,18 @@
 # Vigia — configuracion de ejemplo.
 # Copia este fichero a `config.yaml` y ajusta lo que necesites.
 # Si algo esta mal escrito, Vigia avisa en el log y usa el valor por defecto.
+# Casi todo esto se puede cambiar tambien desde el panel (boton Ajustes).
 
 # Fichero SQLite de eventos (relativo al directorio desde el que arrancas).
 almacen: vigia.db
 
+# --- captura ---------------------------------------------------------------
+# 640x480 es el punto dulce de una webcam normal (~14 fps). Subir a 1280x720
+# reduce los FPS. Cambiarlo requiere reiniciar el dashboard.
+ancho: 640
+alto: 480
+
+# --- reglas ----------------------------------------------------------------
 # Segundos que una persona debe permanecer para disparar `permanencia`.
 permanencia_seg: 30
 
@@ -21,6 +29,7 @@ vigilar_desaparicion:
   - cell phone
 
 # Zonas rectangulares: nombre -> [x1, y1, x2, y2] en pixeles del frame.
+# Lo mas comodo es dibujarlas desde el panel (boton Zonas).
 zonas:
   puerta: [0, 0, 200, 480]
   mesa: [300, 200, 640, 480]
@@ -30,9 +39,28 @@ zonas:
 #   - {desde: "22:00", hasta: "08:00"}
 franjas: []
 
-# Extras (fase 5). Desactivados = menos CPU/disco.
+# --- media -----------------------------------------------------------------
+# Guardar un MP4 de los segundos previos en los eventos importantes.
 guardar_clips: true
+# Guardar un JPEG del instante en *todos* los eventos (historico visual).
+miniaturas: true
+
+# --- mantenimiento ---------------------------------------------------------
+# Dias de eventos a conservar (0 = no purgar nunca).
+retencion_dias: 30
+# Dias de clips y miniaturas a conservar (0 = no purgar por edad).
+retencion_clips_dias: 14
+# Tope de tamano de la carpeta de media en MB (0 = sin tope).
+retencion_clips_mb: 2048
+# Cada cuantos minutos se ejecuta la purga mientras el dashboard esta abierto.
+mantener_cada_min: 60
+
+# --- extras ----------------------------------------------------------------
+# Aviso (toast) de Windows en permanencia y objetos desaparecidos.
 notificar: true
-# Actividades por persona (usar PC, movil, dormir, sentarse...).
-# Requiere descargar el modelo pose (~6 MB) la primera vez.
-actividades: true
+# Segunda pasada de pose para clasificar actividades (descarga el modelo
+# yolo11n-pose.pt la primera vez; baja los FPS).
+actividades: false
+# Caras: YuNet (deteccion) + SFace (identidad), modelos onnx descargados
+# automaticamente (~40MB) a `modelos/`. Conocidos en la tabla `rostros`.
+caras: false
