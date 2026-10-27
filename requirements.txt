@@ -1,0 +1,4 @@
+# Vigia - sistema local de vigilancia con webcam
+opencv-python>=4.9
+ultralytics>=8.3
+pytest>=8.0

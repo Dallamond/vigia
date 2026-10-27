@@ -1,0 +1,66 @@
+# Vigia — Estado del Proyecto
+
+> fecha_actualizacion: 2026-10-27
+> estado_general: documentacion_creada · listo_para_fase_1
+> area: proyecto
+> agente: Alfred (día a día), Atlas (estructura)
+> tags:
+>   - tipo/referencia
+>   - area/proyecto-tec
+>   - tema/vision-por-computador
+> relacionado:
+>   - "[[01-diseno]]"
+>   - "[[02-roadmap]]"
+>   - "[[03-plan-fase-1]]"
+
+## Dónde está
+
+- **Carpeta:** `03 - PROYECTOS TEC/vigia/`
+- **Repositorio:** dentro del vault (git). Carpeta de código en
+  `vigia/` con su propio `.gitignore`.
+
+## Estado actual (27/10/2026)
+
+| Fase | Estado | Notas |
+|---|---|---|
+| 1 — Base (captura + YOLO en vivo) | en_proceso | cámara OK con frontend web, a falta de medir FPS estables |
+| 2 — Tracking de personas | no_empezada | — |
+| 3 — Motor de eventos | no_empezada | — |
+| 4 — Dashboard web | no_empezada | — |
+| 5 — Extras + futura base de escalada | no_empezada | — |
+
+## Registro de cambios
+
+| Fecha | Cambio |
+|---|---|
+| 2026-10-27 | Proyecto creado. Diseño aprobado por Lucas. Docs: diseño, roadmap, plan fase 1, estado. |
+| 2026-10-27 | Fase 1 en proceso: entorno venv Python 3.12 + torch 2.6.0+cu124 (RTX 3060, cuda OK). Código: captura/detector/main/web (+probar_camara). 9/9 tests pasan. Dashboard mínimo lanzado en :8000. |
+| 2026-10-27 | Aprendido: 1) instalar torch cu124 y que pip/ultralytics no lo substituya por la rueda CPU de PyPI; 2) MSMF falla con estas webcam (abre, no lee) → CAP_DSHOW + MJPG resuelto; 3) StreamingResponse para MJPEG, no Response. |
+
+## Datos técnicos acumulados
+
+- GPU: NVIDIA RTX 3060. torch 2.6.0+cu124, `cuda.is_available() == True`.
+- Webcam: solo funciona con backend **CAP_DSHOW + FOURCC MJPG** (MSMF abre pero no entrega frames).
+- Python 3.12 (.venv en la carpeta del proyecto).
+- FPS medidos al primer arranque del dashboard: ~7 (calentando), pendiente valor estable.
+
+(vacío — a medida que ejecutamos fases aquí se registran: FPS reales,
+versión de CUDA que funcionó, modelos, resolución usada...)
+
+## Aprendizajes
+
+(vacío — cada fase deja aquí qué aprendimos, en especial lo que
+aporte al futuro módulo de escalada)
+
+## Próxima acción concreta
+
+Ejecutar **Paso 0** del plan de Fase 1: crear estructura + entorno
+virtual + instalar dependencias (ver `03-plan-fase-1.md`).
+
+## Cómo se actualiza este archivo
+
+Al final de cada sesión de trabajo en Vigia:
+1. Actualizar tabla de fases.
+2. Añadir fila en el registro de cambios.
+3. Si hubo datos técnicos (FPS, versiones), anotarlos.
+4. Dejar la "próxima acción concreta" apuntando al paso actual.
