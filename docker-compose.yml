@@ -1,0 +1,41 @@
+services:
+  vigia:
+    build:
+      context: .
+      args:
+        # Este compose reserva GPU (bloque deploy). Para CPU, ver docs/07:
+        # se construye con BASE_IMAGE=python:3.12-slim y se arranca con docker run.
+        BASE_IMAGE: ${VIGIA_BASE_IMAGE:-pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime}
+    image: vigia:local
+    container_name: vigia
+    restart: unless-stopped
+    stop_grace_period: 20s
+    # Crea `.env` a partir de `.env.example`; sin VIGIA_TOKEN el servicio se
+    # niega a escuchar en 0.0.0.0 (comportamiento intencionado).
+    env_file:
+      - .env
+    environment:
+      VIGIA_HOST: 0.0.0.0
+      VIGIA_PUERTO: "8000"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    # Solo loopback en el host: Caddy/VPN delante. Nunca abras 8000 al exterior.
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Se monta el proyecto entero para que config.yaml, vigia.db, clips/,
+    # logs/ y modelos/ persistan y se puedan editar desde el panel. El guardado
+    # atómico de config.yaml no funciona sobre un bind-mount de *fichero* suelto.
+    volumes:
+      - ./:/app
+    # Webcam: descomenta y ajusta si el contenedor debe leer /dev/video0.
+    # devices:
+    #   - /dev/video0:/dev/video0
+    # group_add:
+    #   - video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

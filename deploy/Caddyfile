@@ -1,0 +1,52 @@
+# Proxy inverso HTTPS para Vigia.
+#
+# Uso:
+#   caddy run --config deploy/Caddyfile
+#   (o copia este bloque al Caddyfile global de tu máquina)
+#
+# Cambia vigia.lan por el nombre que resuelva a esta máquina (DNS local,
+# /etc/hosts o Tailscale MagicDNS). `tls internal` usa la CA local de Caddy:
+# instala su raíz (`caddy trust`) en los dispositivos que vayan a entrar.
+#
+# Vigia sigue escuchando solo en 127.0.0.1:8000; nunca publiques ese puerto.
+{
+    # email tu-correo@ejemplo.com   # solo si usas un dominio público real
+}
+
+vigia.lan {
+    tls internal
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    # El stream MJPEG es largo: no lo cortes por tiempo.
+    reverse_proxy 127.0.0.1:8000 {
+        flush_interval -1
+        transport http {
+            read_timeout 1h
+        }
+    }
+
+    log {
+        output file logs/caddy-vigia.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# --- Acceso desde fuera de casa -------------------------------------------
+# Recomendado: Tailscale/WireGuard y entrar por la IP de la VPN (100.x).
+# Si de verdad necesitas exponerlo, limita por IP de la LAN/VPN y no abras
+# 8000: el token viaja en claro por HTTP. Ejemplo:
+#
+# vigia.ejemplo.com {
+#     @permitidos remote_ip 192.168.1.0/24 100.64.0.0/10
+#     handle @permitidos {
+#         reverse_proxy 127.0.0.1:8000
+#     }
+#     respond 403
+# }

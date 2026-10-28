@@ -1,0 +1,30 @@
+[Unit]
+Description=Vigia - vigilancia local con webcam
+Documentation=file:/opt/vigia/docs/07-despliegue.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vigia
+Group=vigia
+# Para que pueda abrir /dev/video0 (ajusta el grupo si tu distro no lo llama video).
+SupplementaryGroups=video
+WorkingDirectory=/opt/vigia
+# Los secretos (VIGIA_TOKEN, Telegram) van en /opt/vigia/.env, fuera de git.
+EnvironmentFile=-/opt/vigia/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/vigia/.venv/bin/python -m vigia.web
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+# Endurecimiento básico; los datos viven en /opt/vigia.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/vigia
+
+[Install]
+WantedBy=multi-user.target
