@@ -1,7 +1,7 @@
 # Vigia — Estado del Proyecto
 
 > fecha_actualizacion: 2026-10-28
-> estado_general: fases_1-8_hechas · plan_v2_bloques_1-2-4_hechos
+> estado_general: fases_1-8_hechas · plan_v2_bloques_1-2-3-4-6-7_hechos
 > area: proyecto
 > agente: Alfred (día a día), Atlas (estructura)
 > tags:
