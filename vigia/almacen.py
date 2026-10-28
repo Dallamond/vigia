@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS rostros (
     embedding BLOB NOT NULL,
     creado DATETIME NOT NULL
 );
+CREATE TABLE IF NOT EXISTS estado_sistema (
+    clave TEXT PRIMARY KEY,
+    valor TEXT,
+    actualizado DATETIME NOT NULL
+);
 """
 
 # columnas anadidas despues de la v1: se crean si faltan (migracion simple)
@@ -287,6 +292,32 @@ class Almacen:
                                    (int(id_rostro),))
             self.con.commit()
         return (cur.rowcount or 0) > 0
+
+    # -- estado del sistema (armado, avisos...) -----------------------------
+    def guardar_estado(self, clave: str, valor: str | None) -> None:
+        """Guarda un par clave/valor persistente (SOBREVIVE a reinicios)."""
+        ahora = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            self.con.execute(
+                "INSERT INTO estado_sistema (clave, valor, actualizado) "
+                "VALUES (?, ?, ?) ON CONFLICT(clave) DO UPDATE SET "
+                "valor = excluded.valor, actualizado = excluded.actualizado",
+                (str(clave), None if valor is None else str(valor), ahora))
+            self.con.commit()
+
+    def leer_estado(self, clave: str, defecto: str | None = None
+                    ) -> str | None:
+        with self._lock:
+            fila = self.con.execute(
+                "SELECT valor FROM estado_sistema WHERE clave = ?",
+                (str(clave),)).fetchone()
+        return fila[0] if fila else defecto
+
+    def borrar_estado(self, clave: str) -> None:
+        with self._lock:
+            self.con.execute("DELETE FROM estado_sistema WHERE clave = ?",
+                             (str(clave),))
+            self.con.commit()
 
     def cerrar(self) -> None:
         """Cierra la conexion. Se puede llamar mas de una vez sin fallar."""
