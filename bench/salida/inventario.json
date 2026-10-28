@@ -1,0 +1,41 @@
+{
+  "fecha": "2026-10-28T09:42:36",
+  "equipo": "DESKTOP-OTK3GRD",
+  "sistema": "Windows-11-10.0.26300-SP0",
+  "python": "3.12.10",
+  "cpu": "AMD64 Family 23 Model 113 Stepping 0, AuthenticAMD",
+  "gpus_nvidia_smi": [
+    {
+      "indice": 0,
+      "nombre": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288.0,
+      "vram_usada_mb": 1674.0,
+      "vram_libre_mb": 10442.0,
+      "driver": "580.97",
+      "temperatura_c": 60.0,
+      "potencia_w": 66.49
+    }
+  ],
+  "torch": "2.6.0+cu124",
+  "cuda": {
+    "compilada": "12.4",
+    "disponible": true,
+    "cudnn": 90100
+  },
+  "gpu_torch": [
+    {
+      "indice": 0,
+      "nombre": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288,
+      "compute_capability": "8.6",
+      "multiprocesadores": 28
+    }
+  ],
+  "versiones": {
+    "ultralytics": "8.4.191",
+    "opencv": "5.0.0",
+    "numpy": "2.5.2",
+    "onnxruntime": null
+  },
+  "onnx_providers": []
+}

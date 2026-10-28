@@ -1,0 +1,131 @@
+{
+  "fecha": "2026-10-28T09:43:07",
+  "fuente": "sintetico",
+  "ancho_frame": 640,
+  "alto_frame": 480,
+  "dispositivo": "0",
+  "torch": "2.6.0+cu124",
+  "cuda_disponible": true,
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "iteraciones": 80,
+  "calentamiento": 15,
+  "resultados": [
+    {
+      "modelo": "yolo11n.pt",
+      "carga_modelo_ms": 54.4,
+      "lote": 1,
+      "resolucion": 640,
+      "track": false,
+      "latencias_lote_ms": {
+        "p50": 16.6,
+        "p95": 30.53,
+        "media": 18.12,
+        "min": 13.9,
+        "max": 40.35
+      },
+      "latencias_frame_ms": {
+        "p50": 16.6,
+        "p95": 30.53
+      },
+      "fps": 55.2,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 44.15,
+        "a_10_fps": 4,
+        "a_15_fps": 2
+      },
+      "vram": {
+        "vram_max_asignada_mb": 64.2,
+        "vram_max_reservada_mb": 88.0
+      }
+    },
+    {
+      "modelo": "yolo11s.pt",
+      "carga_modelo_ms": 1864.8,
+      "lote": 1,
+      "resolucion": 640,
+      "track": false,
+      "latencias_lote_ms": {
+        "p50": 15.98,
+        "p95": 36.42,
+        "media": 18.77,
+        "min": 13.81,
+        "max": 42.03
+      },
+      "latencias_frame_ms": {
+        "p50": 15.98,
+        "p95": 36.42
+      },
+      "fps": 53.3,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 42.61,
+        "a_10_fps": 4,
+        "a_15_fps": 2
+      },
+      "vram": {
+        "vram_max_asignada_mb": 109.6,
+        "vram_max_reservada_mb": 126.0
+      }
+    },
+    {
+      "modelo": "yolo11m.pt",
+      "carga_modelo_ms": 3390.2,
+      "lote": 1,
+      "resolucion": 640,
+      "track": false,
+      "latencias_lote_ms": {
+        "p50": 25.96,
+        "p95": 31.1,
+        "media": 25.85,
+        "min": 18.39,
+        "max": 43.47
+      },
+      "latencias_frame_ms": {
+        "p50": 25.96,
+        "p95": 31.1
+      },
+      "fps": 38.7,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 30.95,
+        "a_10_fps": 3,
+        "a_15_fps": 2
+      },
+      "vram": {
+        "vram_max_asignada_mb": 214.4,
+        "vram_max_reservada_mb": 254.0
+      }
+    },
+    {
+      "modelo": "yolo11n-pose.pt",
+      "carga_modelo_ms": 50.7,
+      "lote": 1,
+      "resolucion": 640,
+      "track": false,
+      "latencias_lote_ms": {
+        "p50": 18.15,
+        "p95": 23.68,
+        "media": 18.77,
+        "min": 15.3,
+        "max": 37.66
+      },
+      "latencias_frame_ms": {
+        "p50": 18.15,
+        "p95": 23.68
+      },
+      "fps": 53.3,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 42.61,
+        "a_10_fps": 4,
+        "a_15_fps": 2
+      },
+      "vram": {
+        "vram_max_asignada_mb": 121.1,
+        "vram_max_reservada_mb": 136.0
+      }
+    }
+  ],
+  "errores": []
+}

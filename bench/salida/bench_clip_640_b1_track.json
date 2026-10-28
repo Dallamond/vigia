@@ -1,0 +1,73 @@
+{
+  "fecha": "2026-10-28T09:45:12",
+  "fuente": "clips\\20261027_212633_permanencia.webm",
+  "ancho_frame": 640,
+  "alto_frame": 480,
+  "dispositivo": "0",
+  "torch": "2.6.0+cu124",
+  "cuda_disponible": true,
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "iteraciones": 80,
+  "calentamiento": 12,
+  "resultados": [
+    {
+      "modelo": "yolo11n.pt",
+      "carga_modelo_ms": 41.5,
+      "lote": 1,
+      "resolucion": 640,
+      "track": true,
+      "latencias_lote_ms": {
+        "p50": 30.84,
+        "p95": 44.98,
+        "media": 32.53,
+        "min": 23.88,
+        "max": 61.39
+      },
+      "latencias_frame_ms": {
+        "p50": 30.84,
+        "p95": 44.98
+      },
+      "fps": 30.7,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 24.59,
+        "a_10_fps": 2,
+        "a_15_fps": 1
+      },
+      "vram": {
+        "vram_max_asignada_mb": 64.1,
+        "vram_max_reservada_mb": 88.0
+      }
+    },
+    {
+      "modelo": "yolo11n-pose.pt",
+      "carga_modelo_ms": 52.7,
+      "lote": 1,
+      "resolucion": 640,
+      "track": true,
+      "latencias_lote_ms": {
+        "p50": 28.98,
+        "p95": 48.24,
+        "media": 31.81,
+        "min": 23.75,
+        "max": 53.35
+      },
+      "latencias_frame_ms": {
+        "p50": 28.98,
+        "p95": 48.24
+      },
+      "fps": 31.4,
+      "camaras": {
+        "margen": 0.8,
+        "fps_disponibles": 25.15,
+        "a_10_fps": 2,
+        "a_15_fps": 1
+      },
+      "vram": {
+        "vram_max_asignada_mb": 74.5,
+        "vram_max_reservada_mb": 98.0
+      }
+    }
+  ],
+  "errores": []
+}

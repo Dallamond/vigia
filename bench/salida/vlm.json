@@ -1,0 +1,15 @@
+{
+  "fecha": "2026-10-28T09:42:36",
+  "imagen_bytes": 10023,
+  "prompt": "Describe en una frase qué se ve y si hay personas.",
+  "ollama": {
+    "servidor": "http://127.0.0.1:11434",
+    "disponible": false,
+    "error": "no responde: <urlopen error [WinError 10061] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión>"
+  },
+  "lmstudio": {
+    "servidor": "http://127.0.0.1:1234",
+    "disponible": false,
+    "error": "no responde: <urlopen error [WinError 10061] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión>"
+  }
+}
