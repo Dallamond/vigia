@@ -103,7 +103,9 @@ class CarasDetector:
         if caras is None:
             return salida
         for cara in caras:
-            x1, y1, x2, y2 = [int(v) for v in cara[:4]]
+            # YuNet entrega (x, y, ancho, alto), no (x1, y1, x2, y2)
+            x1, y1 = int(cara[0]), int(cara[1])
+            x2, y2 = x1 + int(cara[2]), y1 + int(cara[3])
             try:
                 alineado = self._recon.alignCrop(frame, cara.reshape(1, -1))
             except Exception:

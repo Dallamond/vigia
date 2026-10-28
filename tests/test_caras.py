@@ -84,3 +84,31 @@ def test_embedding_valido():
     for malo in ([1, 2, 3], ["a"] * EMB_DIM, [float("nan")] * EMB_DIM, None):
         with pytest.raises(ValueError):
             embedding_valido(malo)
+
+
+def test_detectar_convierte_la_caja_de_yunet_de_xywh_a_x1y1x2y2():
+    # regresion: YuNet devuelve (x, y, ancho, alto); tratarlo como x1,y1,x2,y2
+    # dejaba el recorte vacio y la cara nunca se asociaba a ninguna persona
+    fila = np.zeros(15, np.float32)
+    fila[:4] = (100, 50, 60, 80)
+    fila[14] = 0.95
+
+    class _YuNet:
+        def setInputSize(self, _):
+            pass
+
+        def detect(self, _frame):
+            return None, np.array([fila])
+
+    class _SFace:
+        def alignCrop(self, frame, cara):
+            return frame
+
+        def feature(self, _):
+            return np.ones((1, EMB_DIM), np.float32)
+
+    d = object.__new__(CarasDetector)
+    d._detector, d._recon, d.conocidos = _YuNet(), _SFace(), {}
+    caras = d.detectar(np.zeros((480, 640, 3), np.uint8))
+    assert caras[0]["caja"] == (100, 50, 160, 130)
+    assert caras[0]["conf"] == pytest.approx(0.95)
