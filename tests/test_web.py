@@ -63,6 +63,14 @@ def test_index_carga(cliente):
     assert 'id="zCanvas"' in r.text
 
 
+def test_static_esta_montado(cliente):
+    # el panel pide /static/panel.css y /static/js/main.js
+    assert any(getattr(ruta, "name", None) == "static" for ruta in web.app.routes)
+    r = cliente.get("/static/panel.css")
+    assert r.status_code == 200
+    assert "text/css" in r.headers["content-type"]
+
+
 def test_estado_tiene_el_formato_esperado(cliente):
     r = cliente.get("/estado")
     assert r.status_code == 200

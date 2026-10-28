@@ -28,6 +28,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
+from fastapi.staticfiles import StaticFiles
 
 from .almacen import Almacen
 from .armado import GestorArmado
@@ -402,6 +403,10 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
 
 app = FastAPI(title="Vigia")
+# el panel nuevo carga css y modulos js desde /static; el middleware ya deja
+# pasar ese prefijo sin token, igual que /auth/
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"),
+          name="static")
 estado = Estado()
 cargar_env()
 _config = cargar_config()
