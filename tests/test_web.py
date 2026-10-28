@@ -15,7 +15,8 @@ from vigia.web import Estado
 
 @pytest.fixture(scope="module")
 def cliente():
-    return TestClient(web.app)
+    # la IP del cliente importa: sin token solo se atiende a localhost
+    return TestClient(web.app, client=("127.0.0.1", 50000))
 
 
 class _CamaraFalsa:
@@ -285,7 +286,7 @@ def test_zonas_put_aplica_y_persiste(monkeypatch, cliente, tmp_path):
     try:
         r = cliente.put("/zonas", json={"zonas": {"puerta": [0, 0, 120, 90]}})
         assert r.status_code == 200 and r.json()["ok"] is True
-        assert web._motor_compartido.zonas == {"puerta": (0, 0, 120, 90)}
+        assert web._motor_compartido.zonas["puerta"].caja == (0, 0, 120, 90)
         assert (tmp_path / "config.yaml").exists()
 
         r = cliente.put("/zonas", json={"zonas": {"mala": [1, 2]}})
@@ -454,7 +455,7 @@ def test_persistir_config_zonas_y_franjas_siguen_siendo_yaml(monkeypatch,
     from vigia.config import cargar_config
     cfg = cargar_config(ruta)
     assert cfg["permanencia_seg"] == 30
-    assert cfg["zonas"] == {"puerta": (0, 0, 100, 100)}
+    assert cfg["zonas"]["puerta"].caja == (0, 0, 100, 100)
     assert cfg["franjas"] == [{"desde": "22:00", "hasta": "08:00"}]
 
 

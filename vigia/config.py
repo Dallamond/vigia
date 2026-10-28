@@ -5,11 +5,14 @@ usa el valor por defecto (ver docs/01-diseno.md, manejo de errores).
 """
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from pathlib import Path
 
 from yaml import safe_load
+
+from .zonas import PRIORIDADES, normalizar_zonas
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +28,27 @@ def ruta_proyecto(ruta: str | Path) -> Path:
     return p if p.is_absolute() else RAIZ / p
 
 
+_PRIORIDADES_DEFECTO = {
+    "cara_desconocida": "critico",
+    "persona_desconocida": "critico",
+    "permanencia": "aviso",
+    "objeto_desaparece": "aviso",
+    "zona_restringida": "critico",
+    "demasiadas_personas": "aviso",
+    "merodeo": "aviso",
+    "persona_inmovil": "critico",
+    "persona_entra": "info",
+    "persona_salio": "info",
+    "objeto_aparece": "info",
+    "persona_reconocida": "info",
+    "actividad": "info",
+}
+
 DEFAULTS = {
     "almacen": "vigia.db",
+    # servicio: las variables VIGIA_HOST / VIGIA_PUERTO siguen ganando
+    "host": "127.0.0.1",
+    "puerto": 8000,
     "permanencia_seg": 30,
     "timeout_objeto_seg": 10,
     "timeout_persona_seg": 10,
@@ -52,9 +74,34 @@ DEFAULTS = {
     "actividades": False,
     # reconocimiento de caras (fase 7): descarga modelos ONNX la primera vez
     "caras": False,
+    # --- reglas por zona (bloque 4) ---
+    # umbral para conocidos: 0 = nunca disparan permanencia
+    "permanencia_conocidos_seg": 0,
+    # re-aviso mientras la persona sigue en la zona (0 = no repetir)
+    "reaviso_min": 0,
+    # merodeo: K re-entradas dentro de la ventana
+    "merodeo_entradas": 3,
+    "merodeo_ventana_seg": 120,
+    # inmovilidad (posible caida): 0 = desactivado
+    "inmovil_seg": 0,
+    "inmovil_px": 20,
+    # maximo de personas global (0 = sin limite); cada zona puede tener el suyo
+    "max_personas": 0,
+    # --- Telegram (bloque 2). Los secretos van en .env, no aqui ---
+    "telegram": False,
+    "telegram_prioridades": _PRIORIDADES_DEFECTO,
+    "telegram_max_hora": 20,
+    "telegram_cooldown_seg": 300,
+    # armado automatico por franjas (si es false, solo manual)
+    "armado_auto": False,
+    "armado_franjas": [],
+    # avisos del sistema
+    "avisos_camara_seg": 300,
+    "avisos_disco_gb": 5,
 }
 
 _LIMITES = {
+    "puerto": (1, 65535),
     "ancho": (160, 3840),
     "alto": (120, 2160),
     "camara": (0, 9),
@@ -122,20 +169,46 @@ def _lista_texto(valor, clave: str):
 
 
 def _zonas(valor):
+    """Zonas nuevas (objetos) o antiguas (`nombre: [x1,y1,x2,y2]`)."""
+    return normalizar_zonas(valor, log_errores=True)
+
+
+def _prioridades(valor):
+    """Mapa tipo de evento -> prioridad, completado con los defaults."""
+    salida = dict(_PRIORIDADES_DEFECTO)
     if not isinstance(valor, dict):
-        log.warning("config: zonas debe ser un mapa nombre -> caja (%r); "
-                    "se ignora", valor)
-        return {}
-    zonas: dict[str, tuple[int, int, int, int]] = {}
-    for nombre, caja in valor.items():
-        if (not isinstance(caja, (list, tuple)) or len(caja) != 4
-                or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
-                           for v in caja)):
-            log.warning("config: zona %r mal formada (se esperan 4 numeros); "
-                        "se ignora", nombre)
+        log.warning("config: telegram_prioridades debe ser un mapa (%r); "
+                    "se usan las prioridades por defecto", valor)
+        return salida
+    for tipo, prioridad in valor.items():
+        texto = str(prioridad).strip().lower()
+        if texto not in PRIORIDADES:
+            log.warning("config: prioridad %r de %r invalida (info/aviso/"
+                        "critico); se ignora", prioridad, tipo)
             continue
-        zonas[str(nombre)] = tuple(int(v) for v in caja)
-    return zonas
+        salida[str(tipo)] = texto
+    return salida
+
+
+def _entero_no_negativo(valor, defecto, clave: str, maximo: int = 86400) -> int:
+    numero = _numero(valor, defecto, clave)
+    try:
+        numero = int(round(float(numero)))
+    except (TypeError, ValueError):
+        numero = defecto
+    if numero < 0:
+        log.warning("config: %s no puede ser negativo (%r); se usa %r",
+                    clave, valor, defecto)
+        return defecto
+    return min(numero, maximo)
+
+
+def _host(valor) -> str:
+    texto = str(valor or "").strip()
+    if not texto:
+        log.warning("config: host vacio; se usa %r", DEFAULTS["host"])
+        return DEFAULTS["host"]
+    return texto
 
 
 def _franjas(valor):
@@ -158,8 +231,7 @@ def _franjas(valor):
 
 
 def _defaults() -> dict:
-    return {k: (v.copy() if isinstance(v, (dict, list)) else v)
-            for k, v in DEFAULTS.items()}
+    return copy.deepcopy(DEFAULTS)
 
 
 def cargar_config(ruta: str | Path | None = None) -> dict:
@@ -216,4 +288,23 @@ def cargar_config(ruta: str | Path | None = None) -> dict:
         "actividades")
     cfg["caras"] = _booleano(
         cfg["caras"], DEFAULTS.get("caras", False), "caras")
+
+    # --- servicio y bloque 4 ------------------------------------------
+    cfg["host"] = _host(cfg.get("host"))
+    for clave in ("permanencia_conocidos_seg", "reaviso_min",
+                  "merodeo_ventana_seg", "inmovil_seg", "inmovil_px",
+                  "max_personas", "telegram_max_hora", "telegram_cooldown_seg",
+                  "avisos_camara_seg", "avisos_disco_gb"):
+        cfg[clave] = _entero_no_negativo(cfg.get(clave), DEFAULTS[clave], clave)
+    cfg["merodeo_entradas"] = max(
+        1, _entero_no_negativo(cfg.get("merodeo_entradas"),
+                               DEFAULTS["merodeo_entradas"],
+                               "merodeo_entradas", maximo=100))
+    cfg["telegram"] = _booleano(
+        cfg.get("telegram"), DEFAULTS["telegram"], "telegram")
+    cfg["telegram_prioridades"] = _prioridades(
+        cfg.get("telegram_prioridades"))
+    cfg["armado_auto"] = _booleano(
+        cfg.get("armado_auto"), DEFAULTS["armado_auto"], "armado_auto")
+    cfg["armado_franjas"] = _franjas(cfg.get("armado_franjas") or [])
     return cfg

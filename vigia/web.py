@@ -25,10 +25,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               StreamingResponse)
 
 from .almacen import Almacen
+from .armado import GestorArmado
 from .captura import Camara, detectar_camaras
 from .clips import GuardadorClips
 from .analisis import ModuloActividades, ModuloCaras
@@ -42,7 +44,12 @@ from .eventos import MotorEventos
 from .logs import configurar_logging
 from .mantener import mantener
 from .notificaciones import notificar
+from .seguridad import (CABECERAS_SEGURIDAD, RUTAS_PUBLICAS,
+                        RUTAS_TOKEN_QUERY, Seguridad, cargar_env,
+                        comprobar_arranque, es_loopback)
+from .telegram import (VigilanteSistema, crear_notificador, estado_config)
 from .tracking import RastreadorPersonas
+from .zonas import normalizar_zonas
 
 log = logging.getLogger("vigia.web")
 
@@ -147,6 +154,7 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
     if evento_id is None:
         evento_id = almacen.guardar(tipo, id_tracking=id_tracking,
                                     detalle=detalle)
+    clip_path = None
     if clips is not None:
         miniatura = None
         if config.get("miniaturas", True):
@@ -156,12 +164,21 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
         if tipo in _EVENTOS_GRANDES and config.get("guardar_clips", True):
             p = clips.guardar(tipo)
             clip = p.name if p else None
+            clip_path = p
         try:
             almacen.anotar_media(evento_id, miniatura=miniatura, clip=clip)
         except Exception:
             log.exception("no se pudo enlazar la media del evento %s", evento_id)
     if tipo in _AVISOS and config.get("notificar", True):
         notificar(f"Vigia: {tipo}", detalle or "")
+    if _telegram is not None:
+        try:
+            _telegram.evento(
+                tipo, detalle or "", frame=frame, clip=clip_path,
+                clave=f"{detalle or ''}|{id_tracking or ''}",
+                armado=_gestor_armado.armado)
+        except Exception:
+            log.exception("no se pudo encolar el aviso de Telegram")
     estado.anadir_evento(tipo, detalle or "")
     return evento_id
 
@@ -259,6 +276,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     # la primera pasada de mantenimiento, tras el arranque
     proximo_mantenimiento = time.monotonic() + 60 * int(
         config.get("mantener_cada_min", 60) or 60)
+    proximo_aviso_sistema = time.monotonic() + 5.0
 
     def anotar(frame, tipo, detalle="", id_tracking=None):
         _anotar_evento(estado, almacen, clips, config, frame, tipo, detalle,
@@ -300,9 +318,13 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 mapa_ids = {ids_idx[i]: d.caja for i, d in enumerate(dets)
                             if d.es_persona and i in ids_idx}
                 extras = [d for d in dets if not d.es_persona]
-                for ev in motor.procesar(dets, mapa_ids, extras):
+                identidades = (mod_caras.identidades
+                               if config.get("caras", False) else None)
+                for ev in motor.procesar(dets, mapa_ids, extras,
+                                         identidades=identidades):
                     _anotar_evento(estado, almacen, clips, config, frame,
-                                   ev.tipo, ev.detalle, evento_id=ev.id)
+                                   ev.tipo, ev.detalle, evento_id=ev.id,
+                                   id_tracking=ev.id_tracking)
 
                 # los interruptores del panel se leen en cada frame: funcionan
                 # sin reiniciar
@@ -337,7 +359,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 # en caliente y no deben quedarse congeladas hasta reiniciar
                 dibujar(frame, dets, fps_ultimo, pie=None,
                         ids_por_indice=ids_idx, ids_persona=ids_dentro,
-                        zonas=motor.zonas)
+                        zonas=motor.zonas_dibujo())
                 estado.actualizar(_jpeg(frame), fps_ultimo, dets,
                                   ids_dentro, True)
 
@@ -358,6 +380,21 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 fps_ultimo, [], set(), False)
             espera = _ESPERA_ERROR
 
+        try:
+            _gestor_armado.actualizar()
+            if (_vigilante_sistema is not None
+                    and time.monotonic() >= proximo_aviso_sistema):
+                proximo_aviso_sistema = time.monotonic() + 60
+                try:
+                    libre_gb = shutil.disk_usage(
+                        str(clips.carpeta if clips is not None else RAIZ)).free
+                    libre_gb /= 1024 ** 3
+                except OSError:
+                    libre_gb = None
+                _vigilante_sistema.revisar(estado.camara_ok, libre_gb)
+        except Exception:
+            log.exception("fallo en los avisos del sistema")
+
         if parar is not None:
             parar.wait(espera)
         else:
@@ -366,6 +403,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
 app = FastAPI(title="Vigia")
 estado = Estado()
+cargar_env()
 _config = cargar_config()
 _almacen = Almacen(ruta_proyecto(_config.get("almacen", "vigia.db")))
 # se crea siempre: el buffer solo se llena con guardar_clips=true, pero los
@@ -376,6 +414,189 @@ _clips = GuardadorClips(carpeta=RAIZ / "clips", fps_salida=10.0)
 _motor_compartido = MotorEventos(_almacen, config=_config)
 _rastreador_compartido = RastreadorPersonas(
     timeout_seg=float(_config.get("timeout_persona_seg", 10)))
+_seguridad = Seguridad(token=os.environ.get("VIGIA_TOKEN"))
+_gestor_armado = GestorArmado(_almacen, _config)
+_telegram = crear_notificador(_config)
+_vigilante_sistema = (VigilanteSistema(
+    _telegram,
+    camara_seg=float(_config.get("avisos_camara_seg", 300)),
+    disco_gb=float(_config.get("avisos_disco_gb", 5)))
+    if _telegram is not None else None)
+
+
+def _aplicar_armado_en_caliente(config: dict) -> None:
+    """Reconfigura el armado automatico sin perder el estado manual."""
+    _gestor_armado.auto = bool(config.get("armado_auto", False))
+    franjas = config.get("armado_franjas") or config.get("franjas") or []
+    _gestor_armado.franjas = [
+        (str(f.get("desde", "00:00")), str(f.get("hasta", "23:59")))
+        for f in franjas]
+
+
+def _reconfigurar_telegram() -> None:
+    """Tras cambiar `telegram` en ajustes: crear/parar el notificador."""
+    global _telegram, _vigilante_sistema
+    if _telegram is not None:
+        _telegram.parar()
+    _telegram = crear_notificador(_config)
+    _vigilante_sistema = (VigilanteSistema(
+        _telegram,
+        camara_seg=float(_config.get("avisos_camara_seg", 300)),
+        disco_gb=float(_config.get("avisos_disco_gb", 5)))
+        if _telegram is not None else None)
+
+
+# -- seguridad: token, cookie y cabeceras ------------------------------------
+def _es_publica(ruta: str) -> bool:
+    return ruta in RUTAS_PUBLICAS or any(
+        ruta.startswith(prefijo) for prefijo in
+        ("/static/", "/auth/"))
+
+
+def _respuesta_no_autenticado() -> JSONResponse:
+    return JSONResponse({"detalle": "no autenticado"}, status_code=401,
+                        headers=dict(CABECERAS_SEGURIDAD))
+
+
+@app.middleware("http")
+async def _middleware_seguridad(request: Request, call_next):
+    ruta = request.url.path
+    cliente_ip = request.client.host if request.client else ""
+    if not _es_publica(ruta):
+        if not _seguridad.requerida:
+            # sin token solo se atiende a la propia maquina
+            if not es_loopback(cliente_ip):
+                return JSONResponse(
+                    {"detalle": "sin VIGIA_TOKEN solo se permite localhost"},
+                    status_code=403, headers=dict(CABECERAS_SEGURIDAD))
+        else:
+            token_query = (request.query_params.get("token")
+                           if ruta in RUTAS_TOKEN_QUERY else None)
+            if not _seguridad.credencial_valida(
+                    request.headers.get("authorization"),
+                    request.cookies.get("vigia_token"), token_query):
+                return _respuesta_no_autenticado()
+    respuesta = await call_next(request)
+    for clave, valor in CABECERAS_SEGURIDAD.items():
+        respuesta.headers.setdefault(clave, valor)
+    return respuesta
+
+
+@app.post("/auth/login")
+async def auth_login(datos: dict, request: Request):
+    """Body {"token": "..."} -> cookie HttpOnly; 401 si no coincide."""
+    ip = request.client.host if request.client else ""
+    if not _seguridad.requerida:
+        return {"ok": True, "auth_requerida": False}
+    if not _seguridad.permitir_login(ip):
+        raise HTTPException(429, "demasiados intentos; espera un minuto")
+    token = str((datos or {}).get("token", ""))
+    if not _seguridad.valido(token):
+        _seguridad.fallo_login(ip)
+        raise HTTPException(401, "token incorrecto")
+    _seguridad.exito_login(ip)
+    respuesta = JSONResponse({"ok": True, "auth_requerida": True})
+    respuesta.set_cookie("vigia_token", token, httponly=True, samesite="lax",
+                         max_age=30 * 24 * 3600, path="/")
+    return respuesta
+
+
+@app.post("/auth/logout")
+async def auth_logout():
+    respuesta = JSONResponse({"ok": True})
+    respuesta.delete_cookie("vigia_token", path="/")
+    return respuesta
+
+
+@app.get("/auth/estado")
+def auth_estado(request: Request) -> dict:
+    """Siempre accesible: la GUI decide si mostrar el login."""
+    autenticado = (not _seguridad.requerida
+                   or _seguridad.credencial_valida(
+                       request.headers.get("authorization"),
+                       request.cookies.get("vigia_token")))
+    return {"auth_requerida": _seguridad.requerida,
+            "autenticado": bool(autenticado)}
+
+
+# -- armado / desarmado ------------------------------------------------------
+def _comando_bot(comando: str):
+    """Comandos del bot; `/foto` devuelve tambien el ultimo frame."""
+    if comando == "/armar":
+        _gestor_armado.auto = False
+        _gestor_armado.armar()
+        return "Vigia ARMADO."
+    if comando == "/desarmar":
+        _gestor_armado.auto = False
+        _gestor_armado.desarmar()
+        return "Vigia desarmado."
+    if comando == "/estado":
+        e = _gestor_armado.estado()
+        return (f"Vigia {'ARMADO' if e['armado'] else 'desarmado'}"
+                + (" (automatico)" if e["auto"] else ""))
+    if comando == "/foto":
+        jpeg, *_ = estado.snapshot()
+        if not jpeg:
+            return "Todavia no hay imagen de la camara."
+        return ("Foto actual de Vigia.", jpeg)
+    return "Comandos: /armar /desarmar /estado /foto"
+
+
+@app.get("/armado")
+def armado_json(response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    _gestor_armado.actualizar()
+    return _gestor_armado.estado()
+
+
+@app.post("/armado")
+async def armado_post(datos: dict) -> dict:
+    """Body {"armado": bool} y opcional {"auto": bool}."""
+    datos = datos or {}
+    if "auto" in datos:
+        _gestor_armado.configurar_auto(_bool_json(datos["auto"], "auto"))
+    if "armado" in datos:
+        # un cambio manual desactiva el automatico para que no lo revierta
+        _gestor_armado.auto = False if "auto" not in datos else \
+            _gestor_armado.auto
+        if _bool_json(datos["armado"], "armado"):
+            _gestor_armado.armar()
+        else:
+            _gestor_armado.desarmar()
+    return _gestor_armado.estado()
+
+
+def _bool_json(valor, clave: str) -> bool:
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        return bool(valor)
+    texto = str(valor).strip().lower()
+    if texto in ("1", "true", "si", "sí", "yes", "on"):
+        return True
+    if texto in ("0", "false", "no", "off", ""):
+        return False
+    raise HTTPException(400, f"{clave} debe ser booleano")
+
+
+# -- Telegram ----------------------------------------------------------------
+@app.get("/telegram/estado")
+def telegram_estado(response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    salida = estado_config(_config)
+    if _telegram is not None:
+        salida.update(_telegram.estado())
+    return salida
+
+
+@app.post("/telegram/prueba")
+def telegram_prueba() -> dict:
+    if _telegram is None:
+        raise HTTPException(
+            409, "Telegram no esta configurado (TELEGRAM_TOKEN/CHAT_ID y "
+                 "telegram: true en config.yaml)")
+    return _telegram.enviar_prueba()
+
 
 _RUTA_PANEL = Path(__file__).parent / "static" / "index.html"
 _PAGINA_MINIMA = ("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">"
@@ -477,16 +698,29 @@ def historial_json(response: Response, tipo: str | None = None,
     return _almacen.historial(limite=limite, tipo=tipo, desde=desde)
 
 
+def _fichero_seguro(fichero: str, extensiones) -> Path:
+    """Resuelve un fichero de media y rechaza traversal y nombres raros."""
+    nombre = str(fichero or "")
+    if (not nombre or nombre != Path(nombre).name or "/" in nombre
+            or "\\" in nombre or ".." in Path(nombre).parts
+            or nombre.startswith("~") or nombre.startswith(".")):
+        raise HTTPException(404, "fichero no encontrado")
+    carpeta = _clips.carpeta.resolve()
+    ruta = (carpeta / nombre).resolve()
+    if ruta.parent != carpeta or ruta.suffix.lower() not in extensiones:
+        raise HTTPException(404, "fichero no encontrado")
+    if not ruta.is_file():
+        raise HTTPException(404, "fichero no encontrado")
+    return ruta
+
+
 @app.get("/clip/{fichero}")
 def clip(fichero: str):
     if _clips is None:
         raise HTTPException(404, "clips desactivados")
-    carpeta = _clips.carpeta.resolve()
-    ruta = (carpeta / fichero).resolve()
-    if (ruta.parent != carpeta or ruta.suffix.lower() not in EXT_CLIP
-            or not ruta.is_file() or ruta.name.startswith("~")):
-        raise HTTPException(404, "clip no encontrado")
-    return FileResponse(ruta, media_type="video/mp4")
+    ruta = _fichero_seguro(fichero, EXT_CLIP)
+    return FileResponse(ruta, media_type=_EXT_MEDIA.get(ruta.suffix.lower(),
+                                                        "video/mp4"))
 
 
 @app.get("/clips")
@@ -499,16 +733,11 @@ def clips_json(response: Response) -> list[dict]:
 
 @app.get("/media/{fichero}")
 def media(fichero: str):
-    """Sirve un clip (.mp4) o una miniatura (.jpg) de la carpeta de media."""
+    """Sirve un clip (.webm/.mp4) o una miniatura (.jpg) de la carpeta de media."""
     if _clips is None:
         raise HTTPException(404, "media desactivada")
-    carpeta = _clips.carpeta.resolve()
-    ruta = (carpeta / fichero).resolve()
-    tipo = _EXT_MEDIA.get(ruta.suffix.lower())
-    if (ruta.parent != carpeta or tipo is None or not ruta.is_file()
-            or ruta.name.startswith("~")):
-        raise HTTPException(404, "fichero no encontrado")
-    return FileResponse(ruta, media_type=tipo)
+    ruta = _fichero_seguro(fichero, tuple(_EXT_MEDIA))
+    return FileResponse(ruta, media_type=_EXT_MEDIA[ruta.suffix.lower()])
 
 
 @app.get("/timeline")
@@ -572,14 +801,23 @@ def salud_json(response: Response) -> dict:
 @app.get("/zonas")
 def zonas_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
-    return {"zonas": {k: list(v) for k, v in _motor_compartido.zonas.items()},
+    return {"zonas": _motor_compartido.zonas_dict(),
             "ancho": estado.ancho, "alto": estado.alto}
 
 
 @app.put("/zonas")
 async def zonas_guardar(datos: dict) -> dict:
-    """Zonas desde el editor visual: se aplican en caliente y se persisten."""
-    return await config_guardar({"zonas": (datos or {}).get("zonas", {})})
+    """Zonas desde el editor visual: se aplican en caliente y se persisten.
+
+    Acepta el formato nuevo (objetos) y el antiguo `nombre: [x1,y1,x2,y2]`.
+    """
+    try:
+        zonas = normalizar_zonas((datos or {}).get("zonas", {}), estricto=True,
+                                 log_errores=False)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await config_guardar(
+        {"zonas": {n: z.a_dict() for n, z in zonas.items()}})
 
 
 @app.get("/actividades")
@@ -677,9 +915,14 @@ def caras_borrar(id_entrada: int) -> dict:
 
 
 # -- ajustes ------------------------------------------------------------------
-_AJUSTES_NUM = ("camara", "permanencia_seg", "timeout_objeto_seg", "timeout_persona_seg",
-                "ancho", "alto", "retencion_dias", "retencion_clips_dias",
-                "retencion_clips_mb", "mantener_cada_min")
+_AJUSTES_NUM = ("camara", "permanencia_seg", "timeout_objeto_seg",
+                "timeout_persona_seg", "ancho", "alto", "retencion_dias",
+                "retencion_clips_dias", "retencion_clips_mb",
+                "mantener_cada_min", "permanencia_conocidos_seg", "reaviso_min",
+                "merodeo_entradas", "merodeo_ventana_seg", "inmovil_seg",
+                "inmovil_px", "max_personas", "telegram_max_hora",
+                "telegram_cooldown_seg", "avisos_camara_seg",
+                "avisos_disco_gb")
 _RANGOS = {
     "permanencia_seg": (1, 3600),
     "timeout_objeto_seg": (1, 3600),
@@ -691,10 +934,21 @@ _RANGOS = {
     "retencion_clips_dias": (0, 3650),
     "retencion_clips_mb": (0, 1024 * 1024),
     "mantener_cada_min": (1, 1440),
+    "permanencia_conocidos_seg": (0, 3600),
+    "reaviso_min": (0, 1440),
+    "merodeo_entradas": (1, 100),
+    "merodeo_ventana_seg": (1, 86400),
+    "inmovil_seg": (0, 86400),
+    "inmovil_px": (1, 4000),
+    "max_personas": (0, 1000),
+    "telegram_max_hora": (0, 10000),
+    "telegram_cooldown_seg": (0, 86400),
+    "avisos_camara_seg": (0, 86400),
+    "avisos_disco_gb": (0, 100000),
 }
 _AJUSTES_BOOL = ("guardar_clips", "notificar", "actividades", "miniaturas",
-                 "caras")
-_AJUSTES_LISTA = ("vigilar_desaparicion", "zonas", "franjas")
+                 "caras", "telegram", "armado_auto")
+_AJUSTES_LISTA = ("vigilar_desaparicion", "zonas", "franjas", "armado_franjas")
 # ancho/alto solo se leen al crear la camara: hace falta reiniciar
 _REQUIEREN_REINICIO = ("ancho", "alto")
 
@@ -717,7 +971,7 @@ def _a_bool(valor, clave: str) -> bool:
 def config_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
     c = dict(_config)
-    c["zonas"] = {k: list(v) for k, v in (_motor_compartido.zonas or {}).items()}
+    c["zonas"] = _motor_compartido.zonas_dict()
     c["franjas"] = [{"desde": d, "hasta": h} for d, h in _motor_compartido.franjas]
     return c
 
@@ -796,15 +1050,11 @@ async def config_guardar(datos: dict) -> dict:
                 raise ValueError("vigilar_desaparicion debe ser lista de clases")
         zonas = datos.get("zonas")
         if zonas is not None:
-            if not isinstance(zonas, dict):
-                raise ValueError("zonas debe ser dict nombre -> caja")
-            for nombre, caja in list(zonas.items()):
-                caja = list(caja)
-                if (len(caja) == 4 and all(
-                        isinstance(x, int) and 0 <= x <= 4000 for x in caja)):
-                    zonas[nombre] = caja
-                    continue
-                raise ValueError(f"zona '{nombre}' no es 4 enteros")
+            try:
+                datos["zonas"] = normalizar_zonas(
+                    zonas, estricto=True, log_errores=False)
+            except ValueError as e:
+                raise ValueError(str(e))
         franjas = datos.get("franjas")
         if franjas is not None:
             from datetime import datetime as _dt
@@ -815,6 +1065,27 @@ async def config_guardar(datos: dict) -> dict:
                     raise ValueError("franja debe ser dict desde/hasta")
                 _dt.strptime(str(f.get("desde", "")), "%H:%M")
                 _dt.strptime(str(f.get("hasta", "")), "%H:%M")
+        armado_franjas = datos.get("armado_franjas")
+        if armado_franjas is not None:
+            from datetime import datetime as _dt
+            if not isinstance(armado_franjas, list):
+                raise ValueError("armado_franjas debe ser una lista")
+            for f in armado_franjas:
+                if not isinstance(f, dict):
+                    raise ValueError("armado_franjas: franja desde/hasta")
+                _dt.strptime(str(f.get("desde", "")), "%H:%M")
+                _dt.strptime(str(f.get("hasta", "")), "%H:%M")
+        prioridades = datos.get("telegram_prioridades")
+        if prioridades is not None:
+            if not isinstance(prioridades, dict):
+                raise ValueError("telegram_prioridades debe ser un mapa")
+            from .zonas import PRIORIDADES
+            for tipo, valor in list(prioridades.items()):
+                texto = str(valor).strip().lower()
+                if texto not in PRIORIDADES:
+                    raise ValueError(
+                        f"prioridad invalida para {tipo}: {valor!r}")
+                prioridades[tipo] = texto
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
 
@@ -826,11 +1097,26 @@ async def config_guardar(datos: dict) -> dict:
     if "vigilar_desaparicion" in datos:
         _motor_compartido.vigilar = list(datos["vigilar_desaparicion"])
     if "zonas" in datos:
-        _motor_compartido.zonas = {
-            k: tuple(v) for k, v in datos["zonas"].items()}
+        _motor_compartido.zonas = dict(datos["zonas"])
     if "franjas" in datos:
         _motor_compartido.franjas = [
             (f["desde"], f["hasta"]) for f in datos["franjas"]]
+    if "permanencia_conocidos_seg" in datos:
+        _motor_compartido.permanencia_conocidos_seg = float(
+            datos["permanencia_conocidos_seg"])
+    if "reaviso_min" in datos:
+        _motor_compartido.reaviso_seg = float(datos["reaviso_min"]) * 60.0
+    if "merodeo_entradas" in datos:
+        _motor_compartido.merodeo_entradas = int(datos["merodeo_entradas"])
+    if "merodeo_ventana_seg" in datos:
+        _motor_compartido.merodeo_ventana_seg = float(
+            datos["merodeo_ventana_seg"])
+    if "inmovil_seg" in datos:
+        _motor_compartido.inmovil_seg = float(datos["inmovil_seg"])
+    if "inmovil_px" in datos:
+        _motor_compartido.inmovil_px = float(datos["inmovil_px"])
+    if "max_personas" in datos:
+        _motor_compartido.max_personas = int(datos["max_personas"])
     if "timeout_persona_seg" in datos:
         _rastreador_compartido.timeout_seg = float(datos["timeout_persona_seg"])
         # el motor tambien usa el margen para no resetear la permanencia
@@ -838,9 +1124,18 @@ async def config_guardar(datos: dict) -> dict:
             datos["timeout_persona_seg"])
 
     # persistir en config.yaml (el dict _config lo lee el bucle en vivo)
-    cambios = {k: v for k, v in datos.items()
-               if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA}
+    guardables = dict(datos)
+    if "zonas" in guardables:
+        guardables["zonas"] = {n: z.a_dict()
+                               for n, z in guardables["zonas"].items()}
+    cambios = {k: v for k, v in guardables.items()
+               if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA
+               or k == "telegram_prioridades"}
     _config.update(cambios)
+    if "armado_auto" in cambios or "armado_franjas" in cambios:
+        _aplicar_armado_en_caliente(_config)
+    if "telegram" in cambios:
+        _reconfigurar_telegram()
     try:
         _persistir_config(cambios)
     except OSError:
@@ -850,18 +1145,32 @@ async def config_guardar(datos: dict) -> dict:
             "reinicio": any(k in datos for k in _REQUIEREN_REINICIO)}
 
 
-def main() -> None:
-    import os
+def _host_y_puerto(config: dict, entorno=None) -> tuple[str, int]:
+    """Las variables de entorno VIGIA_HOST/VIGIA_PUERTO ganan a config.yaml."""
+    entorno = os.environ if entorno is None else entorno
+    host = entorno.get("VIGIA_HOST") or str(config.get("host", "127.0.0.1"))
+    try:
+        puerto = int(entorno.get("VIGIA_PUERTO") or config.get("puerto", 8000))
+    except (TypeError, ValueError):
+        puerto = 8000
+    return host, puerto
 
+
+def main() -> None:
     import uvicorn
 
     ruta_log = configurar_logging()
     log.info("log en %s", ruta_log or "consola")
-    host = os.environ.get("VIGIA_HOST", "127.0.0.1")
+    host, puerto = _host_y_puerto(_config)
     try:
-        puerto = int(os.environ.get("VIGIA_PUERTO", "8000"))
-    except ValueError:
-        puerto = 8000
+        comprobar_arranque(host, _seguridad.token)
+    except RuntimeError as e:
+        log.error("%s", e)
+        raise SystemExit(str(e))
+    _gestor_armado.actualizar()
+    if _telegram is not None:
+        _telegram.iniciar(_comando_bot)
+        _telegram.aviso_sistema("servicio reiniciado")
     parar = threading.Event()
     hilo = threading.Thread(
         target=bucle_procesamiento,
@@ -879,6 +1188,8 @@ def main() -> None:
         # escribiendo sobre una conexion cerrada hasta que muere el proceso
         parar.set()
         hilo.join(5)
+        if _telegram is not None:
+            _telegram.parar()
         if _clips is not None:
             _clips.esperar_trabajos(5)
         _almacen.cerrar()
