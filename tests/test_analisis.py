@@ -196,3 +196,95 @@ def test_persona_de_pose_empareja_por_caja():
     assert persona_de_pose((10, 10, 90, 90), personas) == 4
     assert persona_de_pose((250, 250, 260, 260), personas) == 5
     assert persona_de_pose((500, 500, 510, 510), personas) is None
+
+
+# -- analisis asincrono ------------------------------------------------------
+from vigia.analisis import AnalisisAsincrono  # noqa: E402
+
+
+class _ActividadesFalsas:
+    def __init__(self):
+        self.llamadas = 0
+        self.apagados = 0
+
+    def procesar(self, frame, mapa_ids, extras, ahora=None, dibujar=True):
+        self.llamadas += 1
+        assert dibujar is False  # el hilo nunca pinta sobre el frame vivo
+        return {1: "sentado"}, [(1, "sentado")]
+
+    def apagar(self):
+        self.apagados += 1
+        return True
+
+
+class _CarasFalsas:
+    def procesar(self, frame, mapa_ids, ahora=None, dibujar=True):
+        return [("persona_reconocida", "id 1 = Lucas", 1)]
+
+    def apagar(self):
+        pass
+
+
+def _esperar(cond, seg=2.0):
+    fin = time.time() + seg
+    while time.time() < fin:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_analisis_asincrono_entrega_resultados_sin_bloquear():
+    publicado = {}
+    a = AnalisisAsincrono(_ActividadesFalsas(), _CarasFalsas(), publicado.update)
+    try:
+        frame = np.zeros((10, 10, 3), np.uint8)
+        a.enviar(frame, {1: (0, 0, 5, 5)}, [], True, True)
+        eventos = []
+        assert _esperar(lambda: eventos.extend(a.recoger()) or eventos)
+        assert ("actividad", "id 1 sentado", 1) in eventos
+        assert ("persona_reconocida", "id 1 = Lucas", 1) in eventos
+        assert publicado == {1: "sentado"}
+    finally:
+        a.parar()
+
+
+def test_analisis_asincrono_trabaja_sobre_una_copia_del_frame():
+    visto = []
+
+    class _Act(_ActividadesFalsas):
+        def procesar(self, frame, *a, **k):
+            visto.append(frame)
+            return super().procesar(frame, *a, **k)
+
+    a = AnalisisAsincrono(_Act(), _CarasFalsas(), lambda _: None)
+    try:
+        frame = np.zeros((10, 10, 3), np.uint8)
+        a.enviar(frame, {}, [], True, False)
+        assert _esperar(lambda: visto)
+        assert visto[0] is not frame
+    finally:
+        a.parar()
+
+
+def test_analisis_asincrono_apaga_los_modulos_al_desactivarlos():
+    act = _ActividadesFalsas()
+    publicado = []
+    a = AnalisisAsincrono(act, _CarasFalsas(), publicado.append)
+    try:
+        frame = np.zeros((10, 10, 3), np.uint8)
+        a.enviar(frame, {}, [], True, False)
+        assert _esperar(lambda: act.llamadas)
+        assert _esperar(lambda: a.activo)
+        a.enviar(frame, {}, [], False, False)   # el usuario lo apaga
+        assert _esperar(lambda: act.apagados)
+        assert publicado[-1] == {}
+        assert _esperar(lambda: not a.activo)
+    finally:
+        a.parar()
+
+
+def test_analisis_asincrono_inactivo_no_arranca_hilo():
+    a = AnalisisAsincrono(_ActividadesFalsas(), _CarasFalsas(), lambda _: None)
+    a.enviar(np.zeros((4, 4, 3), np.uint8), {}, [], False, False)
+    assert a._hilo is None

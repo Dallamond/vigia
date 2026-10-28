@@ -22,6 +22,7 @@ import time
 from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -32,9 +33,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .almacen import Almacen
 from .armado import GestorArmado
-from .captura import Camara, detectar_camaras
+from .captura import Camara, LectorAsincrono, detectar_camaras
 from .clips import GuardadorClips
-from .analisis import ModuloActividades, ModuloCaras
+from .analisis import AnalisisAsincrono, ModuloActividades, ModuloCaras
 from .analisis import _iou, persona_de_pose as _persona_de_pose  # noqa: F401
 from .caras import embedding_valido
 from .clips import EXT_CLIP
@@ -49,7 +50,7 @@ from .seguridad import (CABECERAS_SEGURIDAD, RUTAS_PUBLICAS,
                         RUTAS_TOKEN_QUERY, Seguridad, cargar_env,
                         comprobar_arranque, es_loopback)
 from .telegram import (VigilanteSistema, crear_notificador, estado_config)
-from .tracking import RastreadorPersonas
+from .tracking import RastreadorPersonas, ReasociadorIds
 from .zonas import normalizar_zonas
 
 log = logging.getLogger("vigia.web")
@@ -95,6 +96,8 @@ class Estado:
         self.condicion = threading.Condition(self.cerradura)
         self.version = 0
         self.frame_jpeg: bytes | None = None
+        # ultimo frame sin dibujos: fondo del editor de zonas
+        self.frame_crudo = None
         self.fps = 0.0
         self.detecciones: list[Deteccion] = []
         self.ids_persona: set[int] = set()
@@ -105,10 +108,13 @@ class Estado:
         self.alto = 480
 
     def actualizar(self, jpeg: bytes | None, fps: float, dets: list[Deteccion],
-                   ids_persona: set[int], camara_ok: bool) -> None:
+                   ids_persona: set[int], camara_ok: bool,
+                   crudo=None) -> None:
         with self.condicion:
             if jpeg is not None:
                 self.frame_jpeg = jpeg
+            if crudo is not None:
+                self.frame_crudo = crudo
             self.fps = fps
             self.detecciones = dets
             self.ids_persona = ids_persona
@@ -237,10 +243,14 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     """
     if config is None:
         config = _config
+    # con camara propia: lectura en hilo aparte y pose/caras asincronas. Con
+    # una camara inyectada (tests) todo va en serie y es determinista
+    asincrono = cam is None
     if cam is None:
-        cam = Camara(fuente=int(config.get("camara", 0)), abrir=False,
-                     ancho=int(config.get("ancho", 640)),
-                     alto=int(config.get("alto", 480)))
+        cam = LectorAsincrono(Camara(
+            fuente=int(config.get("camara", 0)), abrir=False,
+            ancho=int(config.get("ancho", 640)),
+            alto=int(config.get("alto", 480))))
     ancho = getattr(cam, "ancho", 640)
     alto = getattr(cam, "alto", 480)
     estado.ancho, estado.alto = ancho, alto
@@ -269,7 +279,13 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     mod_actividades = ModuloActividades()
     mod_caras = ModuloCaras(
         cargar_conocidos=lambda: _conocidos(almacen),
-        recarga=bucle_caras_recarga, al_ver_cara=_publicar_cara)
+        recarga=bucle_caras_recarga, al_ver_cara=_publicar_cara,
+        cada_n_frames=2 if asincrono else None)
+    analisis = (AnalisisAsincrono(mod_actividades, mod_caras,
+                                  _publicar_actividades)
+                if asincrono else None)
+    reasociador = ReasociadorIds(
+        ventana_seg=float(config.get("reasociar_seg", 8) or 8))
 
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
@@ -303,7 +319,11 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                     fps_ultimo, [], set(), False)
                 espera = _ESPERA_CAIDA
             else:
+                crudo = frame.copy()  # sin dibujos, para el editor de zonas
                 dets, ids_idx = detector.detectar_track(frame)
+                # ByteTrack cambia de ID al perder a alguien un momento: se
+                # unifican para no inventar entradas ni reiniciar permanencias
+                ids_idx = reasociador.mapear(ids_idx, dets)
                 # el buffer guarda el frame ANTES de anotar el evento: asi el
                 # clip incluye el instante que lo dispara
                 if clips is not None and config.get("guardar_clips", True):
@@ -329,31 +349,47 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
                 # los interruptores del panel se leen en cada frame: funcionan
                 # sin reiniciar
-                if config.get("actividades", False):
-                    try:
-                        res = mod_actividades.procesar(frame, mapa_ids, extras)
-                        if res is not None:
-                            actuales, anuncios = res
-                            for pid, texto in anuncios:
-                                if not fuera:
-                                    anotar(frame, "actividad",
-                                           f"id {pid} {texto}", pid)
-                            _publicar_actividades(actuales)
-                    except Exception:
-                        log.exception("error en pose/actividades (se sigue)")
-                elif mod_actividades.apagar():
-                    _publicar_actividades({})
-
-                if config.get("caras", False):
-                    try:
-                        for tipo, detalle, pid in (
-                                mod_caras.procesar(frame, mapa_ids) or []):
-                            if not fuera:
-                                anotar(frame, tipo, detalle, pid)
-                    except Exception:
-                        log.exception("error en caras (se sigue)")
+                usar_act = bool(config.get("actividades", False))
+                usar_caras = bool(config.get("caras", False))
+                if analisis is not None:
+                    # pose y caras corren en su hilo: aqui solo se entrega el
+                    # frame, se recogen resultados y se pinta lo ultimo conocido
+                    analisis.enviar(frame, mapa_ids, extras, usar_act,
+                                    usar_caras)
+                    for tipo, detalle, pid in analisis.recoger():
+                        if not fuera:
+                            anotar(frame, tipo, detalle, pid)
+                    if usar_act:
+                        mod_actividades.dibujar(frame)
+                    if usar_caras:
+                        mod_caras.etiquetar(frame, mapa_ids)
                 else:
-                    mod_caras.apagar()
+                    if usar_act:
+                        try:
+                            res = mod_actividades.procesar(frame, mapa_ids,
+                                                           extras)
+                            if res is not None:
+                                actuales, anuncios = res
+                                for pid, texto in anuncios:
+                                    if not fuera:
+                                        anotar(frame, "actividad",
+                                               f"id {pid} {texto}", pid)
+                                _publicar_actividades(actuales)
+                        except Exception:
+                            log.exception("error en pose/actividades (se sigue)")
+                    elif mod_actividades.apagar():
+                        _publicar_actividades({})
+
+                    if usar_caras:
+                        try:
+                            for tipo, detalle, pid in (
+                                    mod_caras.procesar(frame, mapa_ids) or []):
+                                if not fuera:
+                                    anotar(frame, tipo, detalle, pid)
+                        except Exception:
+                            log.exception("error en caras (se sigue)")
+                    else:
+                        mod_caras.apagar()
 
                 ids_dentro = rastreador.ids_dentro()
                 # leer las zonas del motor en cada frame: el editor las cambia
@@ -362,7 +398,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                         ids_por_indice=ids_idx, ids_persona=ids_dentro,
                         zonas=motor.zonas_dibujo())
                 estado.actualizar(_jpeg(frame), fps_ultimo, dets,
-                                  ids_dentro, True)
+                                  ids_dentro, True, crudo=crudo)
 
                 if time.monotonic() >= proximo_mantenimiento:
                     proximo_mantenimiento = time.monotonic() + 60 * int(
@@ -401,6 +437,11 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
         else:
             time.sleep(espera)
 
+    if analisis is not None:
+        analisis.parar()
+    if asincrono:
+        cam.liberar()
+
 
 app = FastAPI(title="Vigia")
 # el panel nuevo carga css y modulos js desde /static; el middleware ya deja
@@ -418,7 +459,8 @@ _clips = GuardadorClips(carpeta=RAIZ / "clips", fps_salida=10.0)
 # compartidos para poder aplicar los ajustes del dashboard en caliente
 _motor_compartido = MotorEventos(_almacen, config=_config)
 _rastreador_compartido = RastreadorPersonas(
-    timeout_seg=float(_config.get("timeout_persona_seg", 10)))
+    timeout_seg=float(_config.get("timeout_persona_seg", 10)),
+    confirmar_seg=float(_config.get("confirmar_entrada_seg", 1.0) or 0))
 _seguridad = Seguridad(token=os.environ.get("VIGIA_TOKEN"))
 _gestor_armado = GestorArmado(_almacen, _config)
 _telegram = crear_notificador(_config)
@@ -463,14 +505,34 @@ def _respuesta_no_autenticado() -> JSONResponse:
                         headers=dict(CABECERAS_SEGURIDAD))
 
 
+def _origen_propio(request: Request) -> bool:
+    """True si la peticion no declara origen o este coincide con el Host."""
+    origen = request.headers.get("origin")
+    if not origen:
+        return True  # curl, scripts y navegadores en misma-origen sin cabecera
+    host = request.headers.get("host", "")
+    return urlsplit(origen).netloc.lower() == host.lower()
+
+
 @app.middleware("http")
 async def _middleware_seguridad(request: Request, call_next):
     ruta = request.url.path
     cliente_ip = request.client.host if request.client else ""
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _origen_propio(
+            request):
+        # CSRF: una web cualquiera abierta en tu navegador no debe poder
+        # cambiar la config de un panel escuchando en localhost
+        return JSONResponse({"detalle": "origen no permitido"},
+                            status_code=403,
+                            headers=dict(CABECERAS_SEGURIDAD))
     if not _es_publica(ruta):
         if not _seguridad.requerida:
-            # sin token solo se atiende a la propia maquina
-            if not es_loopback(cliente_ip):
+            # sin token solo se atiende a la propia maquina. Si hay cabeceras
+            # de proxy, la peticion viene de fuera aunque llegue por loopback
+            # (un Caddy/nginx local lo haria pasar por 127.0.0.1)
+            if (not es_loopback(cliente_ip)
+                    or "x-forwarded-for" in request.headers
+                    or "forwarded" in request.headers):
                 return JSONResponse(
                     {"detalle": "sin VIGIA_TOKEN solo se permite localhost"},
                     status_code=403, headers=dict(CABECERAS_SEGURIDAD))
@@ -682,9 +744,11 @@ def camaras_json(response: Response, refrescar: bool = False) -> dict:
 
 
 @app.get("/snapshot.jpg")
-def snapshot() -> Response:
-    """Ultimo frame como JPEG (fondo del editor de zonas)."""
+def snapshot(limpio: bool = False) -> Response:
+    """Ultimo frame como JPEG. `?limpio=1`: sin cajas ni texto (editor de zonas)."""
     jpeg, *_ = estado.snapshot()
+    if limpio and estado.frame_crudo is not None:
+        jpeg = _jpeg(estado.frame_crudo)
     if not jpeg:
         raise HTTPException(404, "todavia no hay imagen")
     return Response(content=jpeg, media_type="image/jpeg",

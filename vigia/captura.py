@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 import time
 
 import cv2
@@ -11,7 +13,9 @@ log = logging.getLogger(__name__)
 _REINTENTO_SEGUNDOS = 2.0
 _INTENTOS_APERTURA = 15
 _ESPERA_ENTRE_INTENTOS = 0.1
-_BACKEND = cv2.CAP_DSHOW  # MSMF falla con muchas webcams Windows (abre pero no lee)
+# En Windows, MSMF falla con muchas webcams (abre pero no lee): DirectShow.
+# DirectShow no existe fuera de Windows (Docker, systemd): backend automatico.
+_BACKEND = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
 
 
 def detectar_camaras(maximo: int = 6, ocupada: int | None = None,
@@ -161,3 +165,77 @@ class Camara:
         self.cap = None
         self.abierta = False
         log.info("Cámara liberada")
+
+
+class LectorAsincrono:
+    """Lee la camara en un hilo y entrega siempre el ULTIMO frame.
+
+    Con la camara leida desde el bucle de deteccion, cada vuelta lenta deja
+    frames acumulandose en el buffer del driver: el video va con retraso y los
+    FPS bajan al ritmo del paso mas lento. Aqui el hilo drena la camara a su
+    ritmo (p. ej. 30 fps del movil) y el bucle coge el mas reciente.
+    """
+
+    def __init__(self, camara: Camara, espera_seg: float = 0.5):
+        self._cam = camara
+        self._espera = espera_seg
+        self._cond = threading.Condition()
+        self._lock_cam = threading.Lock()  # cambiar/liberar no pisan a leer
+        self._frame = None
+        self._seq = 0
+        self._entregado = 0
+        self._ok = False
+        self._parar = False
+        self._hilo = threading.Thread(target=self._bucle, daemon=True,
+                                      name="captura")
+        self._hilo.start()
+
+    # -- delegados que usa el bucle --------------------------------------
+    @property
+    def fuente(self):
+        return self._cam.fuente
+
+    @property
+    def ancho(self) -> int:
+        return self._cam.ancho
+
+    @property
+    def alto(self) -> int:
+        return self._cam.alto
+
+    def cambiar(self, fuente) -> bool:
+        with self._lock_cam:
+            return self._cam.cambiar(fuente)
+
+    def liberar(self) -> None:
+        with self._cond:
+            self._parar = True
+            self._cond.notify_all()
+        self._hilo.join(3)
+        with self._lock_cam:
+            self._cam.liberar()
+
+    # -- hilo ------------------------------------------------------------
+    def _bucle(self) -> None:
+        while not self._parar:
+            with self._lock_cam:
+                ok, frame = self._cam.leer()
+            with self._cond:
+                self._ok = ok
+                if ok:
+                    self._frame = frame
+                    self._seq += 1
+                self._cond.notify_all()
+            if not ok:
+                time.sleep(0.05)  # Camara.leer ya espacia los reintentos
+
+    def leer(self) -> tuple[bool, "cv2.typing.MatLike | None"]:
+        """(ok, frame nuevo). Espera hasta `espera_seg` a que llegue uno."""
+        with self._cond:
+            self._cond.wait_for(
+                lambda: self._seq != self._entregado or self._parar,
+                timeout=self._espera)
+            if not self._ok or self._seq == self._entregado:
+                return False, None
+            self._entregado = self._seq
+            return True, self._frame

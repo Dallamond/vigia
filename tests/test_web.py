@@ -2,6 +2,7 @@
 import threading
 import time
 
+import cv2
 import numpy as np
 import pytest
 from fastapi import HTTPException
@@ -748,3 +749,34 @@ def test_config_acepta_el_indice_de_camara(monkeypatch, cliente, tmp_path):
     finally:
         web._config.clear()
         web._config.update(antes)
+
+
+# -- endurecimiento del middleware ------------------------------------------
+def test_sin_token_un_proxy_local_no_abre_el_panel(cliente, monkeypatch):
+    monkeypatch.setattr(web, "_seguridad", web.Seguridad(token=None))
+    r = cliente.get("/estado", headers={"X-Forwarded-For": "203.0.113.9"})
+    assert r.status_code == 403
+    assert cliente.get("/estado").status_code == 200
+
+
+def test_peticion_de_otro_origen_no_puede_cambiar_estado(cliente):
+    r = cliente.put("/zonas", json={"zonas": {}},
+                    headers={"Origin": "https://malo.example"})
+    assert r.status_code == 403
+    assert r.json()["detalle"] == "origen no permitido"
+
+
+def test_peticion_del_propio_origen_si_pasa(cliente):
+    r = cliente.post("/auth/logout", headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+
+
+def test_snapshot_limpio_usa_el_frame_sin_dibujos(cliente):
+    crudo = np.full((20, 30, 3), 200, np.uint8)
+    web.estado.actualizar(web._jpeg(np.zeros((20, 30, 3), np.uint8)), 1.0, [],
+                          set(), True, crudo=crudo)
+    normal = cliente.get("/snapshot.jpg").content
+    limpio = cliente.get("/snapshot.jpg?limpio=1").content
+    assert normal != limpio
+    img = cv2.imdecode(np.frombuffer(limpio, np.uint8), cv2.IMREAD_COLOR)
+    assert img.mean() > 150

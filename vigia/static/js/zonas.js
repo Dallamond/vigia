@@ -124,7 +124,7 @@ export class EditorZonas {
       this._img = null;
       this._sinCamara(ctx, cv);
     };
-    img.src = '/snapshot.jpg?t=' + Date.now();
+    img.src = '/snapshot.jpg?limpio=1&t=' + Date.now();
   }
 
   _fondo(ctx, cv) {

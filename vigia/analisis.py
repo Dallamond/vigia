@@ -116,6 +116,7 @@ class ModuloActividades:
         self._carga = CargaDiferida(fabrica, "pose")
         self._estabilizadores: dict[int, EstabilizadorAct] = {}
         self._ultima: dict[int, float] = {}
+        self.poses: list = []  # ultimas poses, para dibujarlas aparte
 
     def apagar(self) -> bool:
         """Se llama con el interruptor apagado. True si habia estado que borrar."""
@@ -123,10 +124,15 @@ class ModuloActividades:
         hay = bool(self._estabilizadores)
         self._estabilizadores.clear()
         self._ultima.clear()
+        self.poses = []
         return hay
 
+    def dibujar(self, frame) -> None:
+        """Pinta el esqueleto de la ultima pasada (puede ir unos frames atrasado)."""
+        dibujar_pose(frame, self.poses)
+
     def procesar(self, frame, mapa_ids: dict, extras: list,
-                 ahora: float | None = None
+                 ahora: float | None = None, dibujar: bool = True
                  ) -> tuple[dict[int, str], list[tuple[int, str]]] | None:
         """(actividad actual por persona, anuncios nuevos), o None si el modelo
         todavia no esta listo."""
@@ -153,7 +159,9 @@ class ModuloActividades:
                     and ahora - self._ultima.get(pid, 0) > _GRACIA_ACTIVIDAD_SEG):
                 del self._estabilizadores[pid]
                 self._ultima.pop(pid, None)
-        dibujar_pose(frame, poses)
+        self.poses = poses
+        if dibujar:
+            dibujar_pose(frame, poses)
         return ({pid: est.actual for pid, est in self._estabilizadores.items()},
                 anuncios)
 
@@ -170,7 +178,10 @@ class ModuloCaras:
     def __init__(self, cargar_conocidos: Callable[[], dict],
                  recarga: threading.Event,
                  al_ver_cara: Callable[[dict], None] | None = None,
-                 fabrica: Callable[[], object] = CarasDetector):
+                 fabrica: Callable[[], object] = CarasDetector,
+                 cada_n_frames: int | None = None):
+        if cada_n_frames is not None:
+            self.CADA_N_FRAMES = max(1, int(cada_n_frames))
         self._cargar_conocidos = cargar_conocidos
         self._recarga = recarga
         self._al_ver_cara = al_ver_cara
@@ -186,8 +197,12 @@ class ModuloCaras:
     def apagar(self) -> None:
         self._carga.permitir_reintento()
 
-    def procesar(self, frame, mapa_ids: dict, ahora: float | None = None
-                 ) -> list[tuple[str, str, int]] | None:
+    def etiquetar(self, frame, mapa_ids: dict) -> None:
+        """Escribe los nombres conocidos sobre el frame (publico para el bucle)."""
+        self._etiquetar(frame, mapa_ids)
+
+    def procesar(self, frame, mapa_ids: dict, ahora: float | None = None,
+                 dibujar: bool = True) -> list[tuple[str, str, int]] | None:
         """Eventos nuevos (tipo, detalle, id_persona), o None si el modelo
         todavia no esta listo."""
         detector = self._carga.obtener()
@@ -204,7 +219,8 @@ class ModuloCaras:
         if (self._frame_n - 1) % self.CADA_N_FRAMES == 0:
             eventos = self._analizar(detector, frame, mapa_ids, ahora)
         self._olvidar(mapa_ids, ahora)
-        self._etiquetar(frame, mapa_ids)
+        if dibujar:
+            self._etiquetar(frame, mapa_ids)
         return eventos
 
     # -- internos ---------------------------------------------------------
@@ -276,7 +292,8 @@ class ModuloCaras:
 
     def _etiquetar(self, frame, mapa_ids: dict) -> None:
         """Escribe el nombre bajo la caja de cada persona identificada."""
-        for pid, (nombre, sim) in self.identidades.items():
+        # copia: el hilo de analisis puede modificar el dict mientras se pinta
+        for pid, (nombre, sim) in list(self.identidades.items()):
             caja = mapa_ids.get(pid)
             if nombre is None or caja is None:
                 continue
@@ -288,3 +305,89 @@ class ModuloCaras:
 
 def _area(caja) -> int:
     return max(0, caja[2] - caja[0]) * max(0, caja[3] - caja[1])
+
+
+class AnalisisAsincrono:
+    """Ejecuta pose y caras en un hilo propio, fuera del bucle de video.
+
+    Cada pasada cuesta decenas de ms (YOLO-pose en GPU, YuNet+SFace en CPU);
+    hechas en serie con la deteccion limitaban el video a ~10 FPS. Aqui el
+    bucle solo entrega el ultimo frame y recoge lo ya calculado: si el hilo va
+    mas lento se descartan frames intermedios, nunca se acumula cola.
+    """
+
+    def __init__(self, actividades: ModuloActividades, caras: ModuloCaras,
+                 publicar_actividades: Callable[[dict], None]):
+        self.actividades = actividades
+        self.caras = caras
+        self._publicar = publicar_actividades
+        self._cond = threading.Condition()
+        self._trabajo: tuple | None = None
+        self._salida: list[tuple[str, str, int]] = []
+        self._parar = False
+        self.activo = False  # hay estado vivo que apagar si se desactiva
+        self._hilo: threading.Thread | None = None
+
+    def iniciar(self) -> None:
+        if self._hilo is None:
+            self._hilo = threading.Thread(target=self._bucle, daemon=True,
+                                          name="analisis-pose-caras")
+            self._hilo.start()
+
+    def parar(self) -> None:
+        with self._cond:
+            self._parar = True
+            self._cond.notify_all()
+        if self._hilo is not None:
+            self._hilo.join(5)
+
+    def enviar(self, frame, mapa_ids: dict, extras: list,
+               actividades: bool, caras: bool) -> None:
+        """Deja el frame para la proxima pasada (sustituye al pendiente)."""
+        if not (actividades or caras or self.activo):
+            return
+        self.iniciar()
+        trabajo = (frame.copy(), dict(mapa_ids), list(extras),
+                   actividades, caras)
+        with self._cond:
+            self._trabajo = trabajo
+            self._cond.notify()
+
+    def recoger(self) -> list[tuple[str, str, int]]:
+        """Eventos (tipo, detalle, id) calculados desde la ultima llamada."""
+        with self._cond:
+            salida, self._salida = self._salida, []
+        return salida
+
+    def _bucle(self) -> None:
+        while True:
+            with self._cond:
+                while self._trabajo is None and not self._parar:
+                    self._cond.wait()
+                if self._parar:
+                    return
+                frame, mapa_ids, extras, act, car = self._trabajo
+                self._trabajo = None
+            nuevos: list[tuple[str, str, int]] = []
+            try:
+                if act:
+                    res = self.actividades.procesar(frame, mapa_ids, extras,
+                                                    dibujar=False)
+                    if res is not None:
+                        actuales, anuncios = res
+                        self._publicar(actuales)
+                        nuevos += [("actividad", f"id {pid} {texto}", pid)
+                                   for pid, texto in anuncios]
+                elif self.actividades.apagar():
+                    self._publicar({})
+                if car:
+                    nuevos += self.caras.procesar(frame, mapa_ids,
+                                                  dibujar=False) or []
+                else:
+                    self.caras.apagar()
+            except Exception:
+                log.exception("error en pose/caras (se sigue)")
+            self.activo = bool(act or car)
+            if nuevos:
+                with self._cond:
+                    self._salida += nuevos

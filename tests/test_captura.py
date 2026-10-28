@@ -204,3 +204,74 @@ def test_detectar_camaras_tolera_apertura_rota(monkeypatch):
 
     monkeypatch.setattr(captura.cv2, "VideoCapture", revienta)
     assert captura.detectar_camaras(maximo=2) == []
+
+
+# -- lector asincrono --------------------------------------------------------
+import threading as _threading  # noqa: E402
+
+from vigia.captura import LectorAsincrono  # noqa: E402
+
+
+class _CamaraLenta:
+    """Camara falsa: cada leer() tarda un poco y numera los frames."""
+
+    fuente = 0
+    ancho, alto = 4, 4
+
+    def __init__(self):
+        self.n = 0
+        self.liberada = False
+
+    def leer(self):
+        import time as _t
+        _t.sleep(0.005)
+        self.n += 1
+        return True, np.full((4, 4, 3), self.n % 255, np.uint8)
+
+    def cambiar(self, fuente):
+        self.fuente = fuente
+        return True
+
+    def liberar(self):
+        self.liberada = True
+
+
+def test_lector_asincrono_entrega_siempre_el_ultimo_frame():
+    cam = _CamaraLenta()
+    lector = LectorAsincrono(cam)
+    try:
+        ok1, f1 = lector.leer()
+        import time as _t
+        _t.sleep(0.1)  # el bucle "lento": la camara sigue leyendo mientras tanto
+        ok2, f2 = lector.leer()
+        assert ok1 and ok2
+        assert int(f2[0, 0, 0]) > int(f1[0, 0, 0]) + 1  # salto: se descartaron
+    finally:
+        lector.liberar()
+    assert cam.liberada
+
+
+def test_lector_asincrono_no_repite_el_mismo_frame():
+    class _Congelada(_CamaraLenta):
+        def leer(self):
+            import time as _t
+            _t.sleep(0.05)
+            return super().leer()
+
+    lector = LectorAsincrono(_Congelada(), espera_seg=0.001)
+    try:
+        lector.leer()
+        resultados = [lector.leer()[0] for _ in range(3)]
+        assert False in resultados  # sin frame nuevo => (False, None), sin bloquear
+    finally:
+        lector.liberar()
+
+
+def test_lector_asincrono_delega_cambiar_y_fuente():
+    cam = _CamaraLenta()
+    lector = LectorAsincrono(cam)
+    try:
+        assert lector.cambiar(2) is True
+        assert lector.fuente == 2
+    finally:
+        lector.liberar()

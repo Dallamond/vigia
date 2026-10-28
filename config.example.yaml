@@ -30,6 +30,14 @@ timeout_persona_seg: 10
 # Segundos sin ver un objeto vigilado para anunciar `objeto_desaparece`.
 timeout_objeto_seg: 10
 
+# Segundos que un ID debe verse seguido antes de anunciar `persona_entra`
+# (filtra detecciones fugaces).
+confirmar_entrada_seg: 1.0
+# Un ID nuevo que aparece donde otro acaba de desaparecer (en estos segundos)
+# se considera la misma persona: evita `persona_entra` falsos y que se
+# reinicie la permanencia cuando el tracker cambia de ID.
+reasociar_seg: 8
+
 # Clases COCO cuyo aparecer/desaparecer quieres registrar.
 vigilar_desaparicion:
   - laptop

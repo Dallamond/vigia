@@ -74,6 +74,12 @@ DEFAULTS = {
     "actividades": False,
     # reconocimiento de caras (fase 7): descarga modelos ONNX la primera vez
     "caras": False,
+    # --- entradas/salidas de personas ---
+    # segundos que un ID debe verse seguido antes de anunciar `persona_entra`
+    "confirmar_entrada_seg": 1.0,
+    # un ID nuevo que aparece donde acaba de desaparecer otro (en estos
+    # segundos) se toma por la misma persona: evita entradas falsas
+    "reasociar_seg": 8,
     # --- reglas por zona (bloque 4) ---
     # umbral para conocidos: 0 = nunca disparan permanencia
     "permanencia_conocidos_seg": 0,
