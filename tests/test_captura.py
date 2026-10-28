@@ -1,7 +1,9 @@
 """Tests del modulo de captura (mock de webcam, no requiere camara real)."""
 import numpy as np
 import pytest
+import cv2
 
+from vigia import captura
 from vigia.captura import Camara
 
 
@@ -153,7 +155,7 @@ def test_abrir_bloqueante_admite_timeout(sim_cv):
 
 
 def test_detectar_camaras_prueba_solo_las_libres(monkeypatch):
-    from vigia import captura
+    from vigia import captura  # noqa: F811 (ya importado arriba)
 
     abiertas = []
 
@@ -175,3 +177,30 @@ def test_detectar_camaras_prueba_solo_las_libres(monkeypatch):
     res = captura.detectar_camaras(maximo=4, ocupada=0)
     assert [c["indice"] for c in res] == [0, 2]
     assert 0 not in abiertas  # la que esta en uso no se reabre
+
+
+def test_detectar_camaras_tolera_release_roto(monkeypatch):
+    """Algunos drivers lanzan cv2.error al liberar: /camaras no debe caerse."""
+    class Cap:
+        def __init__(self, i, backend):
+            self.i = i
+
+        def isOpened(self):
+            return False
+
+        def read(self):
+            return False, None
+
+        def release(self):
+            raise cv2.error("release roto")
+
+    monkeypatch.setattr(captura.cv2, "VideoCapture", Cap)
+    assert captura.detectar_camaras(maximo=3) == []
+
+
+def test_detectar_camaras_tolera_apertura_rota(monkeypatch):
+    def revienta(i, backend):
+        raise cv2.error("no puedo abrir")
+
+    monkeypatch.setattr(captura.cv2, "VideoCapture", revienta)
+    assert captura.detectar_camaras(maximo=2) == []

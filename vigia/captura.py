@@ -30,11 +30,16 @@ def detectar_camaras(maximo: int = 6, ocupada: int | None = None,
         try:
             cap = cv2.VideoCapture(i, backend)
             ok = bool(cap.isOpened() and cap.read()[0])
-        except cv2.error:
+        except Exception:  # OpenCV puede lanzar cv2.error o excepciones C++
             ok = False
         finally:
             if cap is not None:
-                cap.release()
+                # en algunas webcams release() tambien revienta: da igual, es
+                # una sonda y no debe tumbar /camaras
+                try:
+                    cap.release()
+                except Exception:
+                    pass
         if ok:
             camaras.append({"indice": i, "disponible": True})
     return camaras

@@ -668,8 +668,12 @@ def camaras_json(response: Response, refrescar: bool = False) -> dict:
     with _camaras_lock:
         vieja = time.monotonic() - _camaras_cache["t"] > _CAMARAS_VIGENCIA_SEG
         if refrescar or vieja or not _camaras_cache["datos"]:
-            _camaras_cache["datos"] = detectar_camaras(ocupada=actual)
-            _camaras_cache["t"] = time.monotonic()
+            try:
+                _camaras_cache["datos"] = detectar_camaras(ocupada=actual)
+                _camaras_cache["t"] = time.monotonic()
+            except Exception:  # drivers rotos: mejor lista vacia que un 500
+                log.exception("no se pudieron sondear las camaras")
+                _camaras_cache["datos"] = _camaras_cache["datos"] or []
         datos = list(_camaras_cache["datos"])
     if actual not in {c["indice"] for c in datos}:
         datos.append({"indice": actual, "disponible": False})
