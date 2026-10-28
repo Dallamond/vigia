@@ -82,6 +82,20 @@
 
 ## Peticiones de B a A
 
+### B1 — GUI
+1. **`GET /static/{fichero}`** ✅ **Hecho por A en `34435a5`** (montado
+   `StaticFiles`); la GUI carga ya en `:8000`. Queda probarla con la cámara
+   real conectada. Mientras no existía se usó `scripts/servir_gui_dev.py` en
+   `:8020` para verificarla sin tocar `web.py`.
+2. **`GET /logs?limite=...`** (opcional) para la vista *Sistema*: devolver las
+   últimas N líneas de `logs/vigia.log` y el tamaño/rotaciones. La GUI ya
+   muestra un aviso de "pendiente" si no existe.
+3. **Multicámara**: cuando `eventos`/`timeline` incluyan `camara_id`, la GUI ya
+   filtra por cámara y muestra el selector; no hace falta endpoint nuevo, solo
+   el campo en los eventos.
+4. Confirmado: el contrato de zonas, armado y Telegram de `NOTAS.md` encaja con
+   la GUI (formatos objeto, 401 con `detalle`, etc.).
+
 ## Resumen final A
 
 ### Qué se hizo
@@ -141,3 +155,82 @@
   (Caddy) conviene añadirlo o dejar que el proxy lo haga.
 
 ## Resumen final B
+
+### Commits
+
+- **B1 GUI modular** — `12fe0ea`: `index.html` con 7 vistas (`data-vista`),
+  router por hash, `panel.css` y 18 módulos ES en `vigia/static/js/`. Añade
+  tema auto/oscuro/claro, responsive móvil, ARIA y atajos; login que no arranca
+  router ni datos ni pide `/video.mjpg` antes de autenticar; editor visual de
+  zonas (cajas, polígonos, exclusión y reglas) y de franjas (barra de 24 h);
+  ajustes agrupados; multicámara preparada; polling pausable aislado en
+  `datos.js` para un futuro SSE. Herramientas: `scripts/servir_gui_dev.py`
+  (8020/8021) y `scripts/verificar_gui.mjs` (Chrome headless por CDP).
+- **B2 despliegue** — `2fe9cd4`: `Dockerfile` CUDA con usuario no root y `ARG`
+  para CPU, `docker-compose.yml` (GPU, solo loopback, proyecto montado),
+  `.dockerignore`, `deploy/vigia.service` (systemd), NSSM para Windows,
+  `deploy/Caddyfile` con TLS interno, `scripts/backup.py` (API de backup de
+  SQLite, `quick_check`, `config.yaml`, rotación; la tabla `rostros` va dentro
+  de la BD) y `docs/07-despliegue.md`.
+- **B3 GPUs** — `3ca6d37`: `bench/inventario.py` (torch + `nvidia-smi`),
+  `bench/benchmark.py` (YOLO11 n/s/m y pose, clip o frames sintéticos,
+  `--imgsz`/lote/`--track`, FPS y p50/p95, estimación de cámaras a 10/15 FPS
+  con 20 % de margen), `bench/vlm.py` (sonda Ollama/LM Studio), JSON en
+  `bench/salida/` y conclusiones en `docs/08-gpus.md`.
+
+### Qué se probó de verdad
+
+- GUI en Chrome real (1440×900 y 390×844) con `verificar_gui.mjs`: sin fallos
+  de consola ni desbordamiento. Login con token erróneo y correcto; guardado
+  real de caja, polígono, exclusión, reglas y franjas contra `:8020`,
+  restaurando `config.yaml` después.
+- Backup contra la BD real (228 eventos, 1 rostro, `quick_check` ok) y 4 tests
+  propios. YAML del compose y sintaxis del script de PowerShell validados.
+- Benchmarks en la RTX 3060 (driver 580.97, torch 2.6.0+cu124): clip 640×480
+  b1 sin tracking 46,4 FPS / p50 18,2 ms; con tracking 30,7 FPS / p50 30,8 ms
+  (≈2 cámaras a 10 FPS o 1 a 15); lote 4, 137,8 FPS; 1280, yolo11n 36,0 FPS y
+  yolo11m 12,0 FPS.
+- Suite completa: **263 passed, 1 warning**.
+
+### Pendiente / no probado (a propósito)
+
+- **Docker, systemd, NSSM y Caddy no se han ejecutado**: no están instalados en
+  este PC. Están escritos y validados de sintaxis, pero no hay prueba real de
+  arranque; así se dice en `docs/07-despliegue.md`.
+- **VLM sin medir**: ni Ollama (11434) ni LM Studio (1234) respondían. No hay
+  conclusiones de VLM en `docs/08-gpus.md` más allá de "no medido".
+- **Panel en `:8000` con cámara real**: la webcam no estaba disponible en el
+  entorno de B; queda pendiente una pasada con el motor real.
+- `/logs` sigue sin existir (petición 2 de arriba); la vista *Sistema* muestra
+  el aviso de "pendiente".
+
+### Decisiones raras (a propósito)
+
+- Compose monta el proyecto entero en `/app` en vez de `config.yaml` suelto
+  porque el guardado atómico sobre un bind-mount de fichero falla en Linux.
+- El backup copia también `config.yaml` (no solo la BD), para que una
+  restauración deje el sistema como estaba.
+- La estimación de cámaras usa `fps * 0.8 / objetivo`, un 20 % de margen para
+  dibujo, captura y picos; es una estimación, no una promesa.
+- `--track` va separado del benchmark base porque el tracking es el modo real
+  (y baja el FPS a la mitad); mezclarlos daría cifras engañosas.
+- En la GUI, `Camaras` conserva el valor previo del select y muestra
+  "Cargando cámaras…" porque `/camaras` tarda ~16 s en frío sin cámara.
+
+## Ronda de correcciones (revisión tras pruebas en vivo, 28/10/2026)
+
+- **Caras:** YuNet devuelve cajas `x,y,w,h`; se trataban como `x1,y1,x2,y2`. Recorte
+  vacío (imagen rota en «Personas»), cara nunca asociada a persona, nadie se
+  reconocía. Corregido en `caras.py` (+test).
+- **Zonas (GUI, fichero de B):** `pintar()` hacía `clearRect` y borraba la captura
+  de fondo (lienzo negro). Edit puntual en `static/js/zonas.js` (`_img`).
+  **B: sin commitear aún; está en tu working tree.**
+- **IDs estables:** `tracking.ReasociadorIds` + `confirmar_seg` en
+  `RastreadorPersonas` (config `reasociar_seg`, `confirmar_entrada_seg`).
+- **Actividad:** clasificador reescrito (sin rodillas ≠ de pie; móvil cerca de las
+  muñecas; votación temporal en `EstabilizadorAct`).
+- **FPS:** `captura.LectorAsincrono` (hilo de lectura, último frame) y
+  `analisis.AnalisisAsincrono` (pose+caras fuera del bucle). Medido con el móvil
+  (cámara 2): 11 → ~20 fps a 640x480; **1280x720 solo da 10 fps de cámara pura
+  (driver), 960x540 da 30** → `config.yaml` queda en 960x540.
+- Pendiente: el snapshot del editor de zonas lleva pintadas las detecciones.

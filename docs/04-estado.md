@@ -57,13 +57,15 @@
 
 ## Datos técnicos acumulados
 
-- GPU: NVIDIA RTX 3060. torch 2.6.0+cu124, `cuda.is_available() == True`.
+- GPU: NVIDIA RTX 3060 (driver 580.97). torch 2.6.0+cu124,
+  `cuda.is_available() == True`.
+- Medido con `bench/benchmark.py` (clip 640×480, lote 1): yolo11n 46,4 FPS /
+  p50 18,2 ms / p95 39,3 ms sin tracking; con tracking 30,7 FPS / p50 30,8 ms
+  (≈2 cámaras a 10 FPS o 1 a 15). Lote 4: 137,8 FPS. A 1280: yolo11n 36,0 FPS,
+  yolo11m 12,0 FPS. Detalle en `docs/08-gpus.md`.
 - Webcam: solo funciona con backend **CAP_DSHOW + FOURCC MJPG** (MSMF abre pero no entrega frames).
 - Python 3.12 (.venv en la carpeta del proyecto).
 - FPS medidos al primer arranque del dashboard: ~7 (calentando), pendiente valor estable.
-
-(vacío — a medida que ejecutamos fases aquí se registran: FPS reales,
-versión de CUDA que funcionó, modelos, resolución usada...)
 
 ## Aprendizajes
 
@@ -73,9 +75,12 @@ aporte al futuro módulo de escalada)
 ## Próxima acción concreta
 
 Bloques 1 (seguridad), 2 (Telegram) y 4 (reglas por zona) del plan v2 hechos
-por la terminal A; la GUI (bloque 3) y el despliegue/GPUs van en paralelo en la
-terminal B. Siguiente del backend: cámaras IP RTSP (bloque 5), cuando B cierre
-la GUI y se revise el contrato de `/zonas` en `docs/prompts/NOTAS.md`.
+por la terminal A; GUI (bloque 3), despliegue (bloque 6) y GPUs (bloque 7) hechos
+por la terminal B (B1 `12fe0ea`, B2 `2fe9cd4`, B3 `3ca6d37`). Siguiente del
+backend: cámaras IP RTSP (bloque 5) con el contrato de `/zonas` ya cerrado en
+`docs/prompts/NOTAS.md`. Antes de dar el despliegue por bueno, probar Docker,
+systemd/NSSM y Caddy en una máquina donde estén instalados (aquí no lo están),
+y hacer una pasada del panel en `:8000` con cámara real.
 
 ## Cómo se actualiza este archivo
 
