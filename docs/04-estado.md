@@ -1,7 +1,7 @@
 # Vigia — Estado del Proyecto
 
 > fecha_actualizacion: 2026-10-28
-> estado_general: fases_1-8_hechas · plan_v2_bloques_1-2-3-4-6-7_hechos
+> estado_general: fases_1-8_hechas · plan_v2_bloques_1-4-6-10_hechos · pendiente_camaras_ip
 > area: proyecto
 > agente: Alfred (día a día), Atlas (estructura)
 > tags:
@@ -19,7 +19,7 @@
 - **Repositorio:** dentro del vault (git). Carpeta de código en
   `vigia/` con su propio `.gitignore`.
 
-## Estado actual (27/10/2026)
+## Estado actual (28/10/2026)
 
 | Fase | Estado | Notas |
 |---|---|---|
@@ -31,6 +31,13 @@
 | 6 — Actividades | hecha | pose 17 kpts + clasificador estable (5 actividades) |
 | 7 — Caras + registro de conocidos | hecha | YuNet+SFace local, registro desde el panel (☺ Caras), eventos `persona_reconocida` / `cara_desconocida` |
 | 8 — Pulido (27/10 noche) | hecha | clips WebM, línea del tiempo inferior en directo, selector de webcam, rutas ancladas al proyecto |
+| v2-1 — Seguridad | hecha | token (`VIGIA_TOKEN`), cookie, 401, límite de intentos, cabeceras, anti-CSRF, sin proxy sin token |
+| v2-2 — Telegram | hecha, sin probar con bot real | long polling, prioridades, anti-spam, armado, comandos, avisos del sistema |
+| v2-3 — GUI | hecha | 7 vistas modulares, login, zonas (caja/polígono/exclusión), franjas, tema, móvil |
+| v2-4 — Reglas por zona | hecha, solo con tests | permanencia por zona, conocidos, restringida, aforo, merodeo, inmovilidad |
+| v2-6 — Despliegue | escrito, sin probar | Docker CUDA, compose, systemd/NSSM, Caddy, backup (Docker no instalado aquí) |
+| v2-10 — GPUs | medido (RTX 3060) | `docs/08-gpus.md`; VLM sin medir (Ollama/LM Studio apagados) |
+| Pulido 28/10 | hecho | caras (cajas YuNet), IDs estables, actividad con votación, FPS 11→~22 (pose/caras y cámara en hilos), 960x540 |
 
 ## Registro de cambios
 
@@ -54,6 +61,7 @@
 | 2026-10-28 | **B1 GUI modular**: panel reescrito en 7 vistas con router por hash y módulos ES en `vigia/static/js/`, CSS propio (`panel.css`), tema auto/oscuro/claro, responsive móvil y ARIA/atajos; editor visual de zonas (cajas, polígonos, exclusión y reglas por zona) compatible con el formato antiguo y el nuevo, franjas horarias con barra de 24 h, ajustes agrupados con validación, multicámara preparada, login con token y polling pausable aislado (`datos.js`) para un futuro SSE. Verificado en Chrome real (1440×900 y 390×844) con `scripts/verificar_gui.mjs`; login, guardado de zonas y de ajustes probados con `scripts/servir_gui_dev.py` (8020/8021). 236/236 tests. |
 | 2026-10-28 | **B2 despliegue**: `Dockerfile` CUDA con usuario no root y `ARG` para CPU, `docker-compose.yml` con GPU, solo loopback y el proyecto montado, `.dockerignore`; unit `deploy/vigia.service` y `deploy/instalar-servicio-windows.ps1` (NSSM); `deploy/Caddyfile` con TLS interno y nota de VPN; `scripts/backup.py` con la API de backup de SQLite, `quick_check`, copia de `config.yaml` y rotación (la BD incluye `rostros`) + 4 tests; `docs/07-despliegue.md` con PC vs Proxmox/LXC, variante CPU, HTTPS/VPN, restauración y checklist. Docker/systemd/NSSM/Caddy no se han ejecutado aquí (no están instalados en este PC); el backup sí se probó contra la BD real. 260/260 tests. |
 | 2026-10-28 | **B3 GPUs medida**: `bench/inventario.py` (torch + `nvidia-smi`), `bench/benchmark.py` (YOLO11 n/s/m y pose con clip real y frames sintéticos, `imgsz`/lote/`--track` configurables, FPS y p50/p95 por frame, estimación de cámaras a 10/15 FPS con 20 % de margen) y `bench/vlm.py` (sonda de Ollama/LM Studio); JSON medidos en `bench/salida/` y conclusiones en `docs/08-gpus.md`. En la RTX 3060: yolo11n 46,4 FPS / p50 18,2 ms a 640 sin tracking; con tracking 30,7 FPS / p50 30,8 ms, es decir 2 cámaras a 10 FPS o 1 a 15. Ni Ollama (11434) ni LM Studio (1234) respondían, así que el VLM queda sin medir. 263/263 tests. |
+| 2026-10-28 | **Revision y pulido (Claude)**: caras (cajas YuNet xywh), IDs estables + confirmacion de entrada, clasificador de actividad reescrito con votacion, lector de camara y pose/caras en hilos (11 -> ~18-20 fps; 960x540 por limite del driver a 720p), snapshot limpio para zonas, middleware anti-CSRF y anti-proxy sin token, backend de camara portable (Linux). Suite 267. |
 
 ## Datos técnicos acumulados
 
@@ -74,13 +82,53 @@ aporte al futuro módulo de escalada)
 
 ## Próxima acción concreta
 
-Bloques 1 (seguridad), 2 (Telegram) y 4 (reglas por zona) del plan v2 hechos
-por la terminal A; GUI (bloque 3), despliegue (bloque 6) y GPUs (bloque 7) hechos
-por la terminal B (B1 `12fe0ea`, B2 `2fe9cd4`, B3 `3ca6d37`). Siguiente del
-backend: cámaras IP RTSP (bloque 5) con el contrato de `/zonas` ya cerrado en
-`docs/prompts/NOTAS.md`. Antes de dar el despliegue por bueno, probar Docker,
-systemd/NSSM y Caddy en una máquina donde estén instalados (aquí no lo están),
-y hacer una pasada del panel en `:8000` con cámara real.
+Siguiente bloque grande del plan v2: **cámaras IP RTSP y multicámara (bloque 5)**.
+Antes, cerrar lo que está escrito pero sin comprobar (lista de abajo).
+
+## Tareas pendientes (28/10/2026)
+
+### A. Probar en real (lo escrito pero no comprobado)
+- [ ] **Actividad**: sentarse/levantarse con el móvil y ajustar umbrales de
+      `actividades.py` si "sentado"/"de pie" fallan en tu postura real.
+- [ ] **Caras**: registrar otra muestra de frente (sin capucha) y comprobar
+      `persona_reconocida`; ver que Lucas ya no dispara permanencia.
+- [ ] **Reglas por zona** con cámara real (restringida, aforo, merodeo, inmóvil).
+- [ ] **Telegram** con un bot real: `.env` con `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID`,
+      `telegram: true`, `POST /telegram/prueba`, `/armar /desarmar /estado /foto`.
+- [ ] **Token**: crear `.env` con `VIGIA_TOKEN` antes de abrir el panel a la red.
+- [ ] **Docker/systemd/NSSM/Caddy**: probar en una máquina donde estén instalados.
+- [ ] **Cámara**: `config.yaml` sigue con `camara: 0`; elegir la del móvil.
+
+### B. Código pendiente (por prioridad)
+1. **Cámaras IP RTSP/ONVIF y multicámara** (bloque 5): lista de cámaras en config,
+   un hilo y un motor por cámara, `camara_id` en eventos/clips, substream para
+   detectar y mainstream para clips, reconexión robusta.
+2. **Personas** (bloque 7): conjunto de prueba con clips reales, probar `yolo11s/m`,
+   BoT-SORT con re-ID, máscaras de ignorar, validar visión nocturna, ONNX/TensorRT.
+3. **Acciones** (bloque 8): ventana temporal de keypoints, `persona_caida`, "usando
+   móvil/PC" por orientación de cabeza, más actividades.
+4. **Caras** (bloque 9): asistente de varias muestras, comprobación de calidad,
+   registrar desde un evento del historial, umbral por persona, re-ID de cuerpo,
+   política de privacidad de los embeddings.
+5. **`/logs`**: endpoint para la vista Sistema (hoy muestra "pendiente").
+6. **Polígonos en el vídeo**: `dibujo.py` solo pinta cajas.
+7. **Telegram**: clip WebM → MP4 H.264 si el móvil no lo reproduce (TODO en `telegram.py`).
+8. **VLM local** (Ollama/LM Studio) para describir eventos y resumen diario: medir
+   latencia y VRAM; solo en eventos, nunca por frame.
+9. **Pequeños**: unificar `detail`/`detalle` en las respuestas de error; reglas por
+   zona fuera de la franja global; persona en dos zonas se asigna solo a la primera;
+   validar rango de coordenadas de zonas; `main.py` (ventana de escritorio) no usa
+   los hilos nuevos.
+
+### C. Decisiones abiertas (de `06-plan-v2.md`)
+- ¿Cuántas cámaras IP, marca/modelo (RTSP/ONVIF), Wi-Fi o PoE?
+- ¿Servidor en Proxmox (homelab) o en el PC con la RTX 3060?
+- ¿Acceso desde fuera de casa? (VPN recomendada.)
+- ¿Política para guardar caras de otras personas (visitas, familia)?
+
+### Datos técnicos útiles
+- Cámara del móvil: 1280x720 solo da 10 fps (driver); **960x540 da 30 fps**.
+- Pose y caras van en un hilo aparte; con ambas activas el panel marca ~18-22 fps.
 
 ## Cómo se actualiza este archivo
 

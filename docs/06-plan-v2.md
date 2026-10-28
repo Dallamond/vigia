@@ -1,7 +1,7 @@
 # Vigia — Plan v2 (priorizado)
 
 > fecha_creacion: 2026-10-27
-> estado: apuntado (sin empezar)
+> estado: en curso (bloques 1-4, 6 y 10 hechos; ver 04-estado.md)
 > area: proyecto
 > agente: Alfred
 > tags:
