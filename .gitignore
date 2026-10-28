@@ -8,6 +8,7 @@ runs/
 docs/superpowers/
 *.db
 config.yaml
+.env
 *.db-wal
 *.db-shm
 *.log
