@@ -1,7 +1,7 @@
 # Vigia — Estado del Proyecto
 
-> fecha_actualizacion: 2026-10-27
-> estado_general: fases_1-8_hechas · plan_v2_apuntado
+> fecha_actualizacion: 2026-10-28
+> estado_general: fases_1-8_hechas · plan_v2_bloques_1-2-4_hechos
 > area: proyecto
 > agente: Alfred (día a día), Atlas (estructura)
 > tags:
@@ -48,6 +48,9 @@
 | 2026-10-27 | FASE 7 CARAS: `caras.py` (YuNet detección + SFace embeddings, 100% local, onnx auto-descargados ~40MB a `modelos/`), tabla `rostros` en SQLite, bucle integra identidad asociando cara↔persona por caja (nombre en pantalla + evento `persona_reconocida`; desconocidos → `cara_desconocida` con cooldown 120 s). API del registro: GET/POST/DELETE `/caras/registro` con recarga en caliente (sin reiniciar). `caras` en ajustes bool + config.yaml. Suite 105/105. Servidor verificado en :8000 (~9 FPS con pose+caras). |
 | 2026-10-27 | Auditoría y cierre: los clips pasan de `mp4v` (no reproducible en navegador) a WebM VP8, con buffer comprimido, escritura atómica y `--convertir` para los antiguos. Línea del tiempo horizontal a ancho completo, en directo; `/timeline?desde&hasta`. Caras: modelos en segundo plano, análisis cada 3 frames, `persona_reconocida` (antes solo documentada) y registro desde el panel con validación. Selector de webcam en caliente (`/camaras`). Rutas ancladas a la raíz, `config.yaml` fuera de git, config atómica, bucle partido en `analisis.py`. Suite 177/177. |
 | 2026-10-27 | Plan v2 apuntado en `docs/06-plan-v2.md`: reorganización de la GUI, caras, permanencia, priorización, personas y acciones mejoradas, Telegram, cámaras IP Wi-Fi, servidor local e investigación de GPUs. Servidor lanzado en :8000 con la versión nueva. |
+| 2026-10-28 | **A1 seguridad**: `host`/`puerto` en `config.yaml` (entorno gana), `VIGIA_TOKEN` + `.env` sin dependencias, middleware que exige token a API/vídeo (Bearer, cookie `vigia_token` HttpOnly SameSite=Lax, `?token=` solo en vídeo/snapshot), `/auth/login|logout|estado`, limitación de intentos por IP, negativa a arrancar en red sin token, cabeceras de seguridad y validación anti-traversal en `/clip` y `/media`. Tests nuevos en `tests/test_seguridad.py`. |
+| 2026-10-28 | **A2 Telegram**: cliente Bot API por long polling con stdlib, secretos en `.env`, avisos con miniatura y clip WebM en hilo aparte, prioridades configurables, anti-spam (máximo/hora + cooldown + "+N eventos más"), armado persistente con `/armar /desarmar /estado /foto` y franjas automáticas, avisos de cámara caída/disco/servicio reiniciado y endpoints `/armado`, `/telegram/estado`, `/telegram/prueba`. Tests en `tests/test_telegram.py` y `tests/test_armado.py`. |
+| 2026-10-28 | **A3 zonas y reglas**: zonas como objeto `{caja|poligono, permanencia_seg, franjas, restringida, excluir, max_personas, vigilar, conocidos}` manteniendo el formato antiguo; permanencia por zona con histéresis y re-aviso; conocidos con umbral propio o excluidos; eventos `zona_restringida`, `demasiadas_personas`, `merodeo`, `persona_inmovil`; polígonos y exclusión; objetos vigilados por zona. Tests en `tests/test_zonas.py`. |
 
 ## Datos técnicos acumulados
 
@@ -66,11 +69,10 @@ aporte al futuro módulo de escalada)
 
 ## Próxima acción concreta
 
-Fases 1-8 cerradas (177 tests). Siguiente: **plan v2** en `06-plan-v2.md`.
-Orden: 1) seguridad/token, 2) Telegram, 3) reorganización de la GUI,
-4) permanencia y reglas por zona, 5) cámaras IP RTSP, 6) servidor local,
-7-9) mejora de personas/acciones/caras, 10) investigación de GPUs (en paralelo).
-Antes de empezar hay decisiones abiertas al final de ese documento.
+Bloques 1 (seguridad), 2 (Telegram) y 4 (reglas por zona) del plan v2 hechos
+por la terminal A; la GUI (bloque 3) y el despliegue/GPUs van en paralelo en la
+terminal B. Siguiente del backend: cámaras IP RTSP (bloque 5), cuando B cierre
+la GUI y se revise el contrato de `/zonas` en `docs/prompts/NOTAS.md`.
 
 ## Cómo se actualiza este archivo
 

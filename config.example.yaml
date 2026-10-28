@@ -6,6 +6,12 @@
 # Fichero SQLite de eventos (relativo a la carpeta del proyecto).
 almacen: vigia.db
 
+# --- servicio --------------------------------------------------------------
+# Donde escucha el panel. Las variables VIGIA_HOST / VIGIA_PUERTO ganan.
+# Sin VIGIA_TOKEN solo se permite 127.0.0.1; con host de red exige token.
+host: 127.0.0.1
+puerto: 8000
+
 # --- captura ---------------------------------------------------------------
 # 640x480 es el punto dulce de una webcam normal (~14 fps). Subir a 1280x720
 # reduce los FPS. Cambiarlo requiere reiniciar el dashboard.
@@ -30,16 +36,41 @@ vigilar_desaparicion:
   - backpack
   - cell phone
 
-# Zonas rectangulares: nombre -> [x1, y1, x2, y2] en pixeles del frame.
+# Zonas: cajas o poligonos con reglas propias. El formato antiguo
+# `nombre: [x1, y1, x2, y2]` se sigue aceptando.
 # Lo mas comodo es dibujarlas desde el panel (boton Zonas).
 zonas:
-  puerta: [0, 0, 200, 480]
-  mesa: [300, 200, 640, 480]
+  puerta:
+    caja: [0, 0, 200, 480]
+    permanencia_seg: 20          # null = usa permanencia_seg global
+    restringida: false
+    excluir: false
+  mesa:
+    caja: [300, 200, 640, 480]
+    vigilar: [laptop, cell phone]
+    max_personas: 2
+  espejo:
+    poligono: [[10, 10], [120, 10], [120, 90], [10, 90]]
+    excluir: true                # lo que caiga aqui no genera eventos
 
 # Franjas horarias en las que las reglas del motor estan activas (HH:MM).
 # franjas:
 #   - {desde: "22:00", hasta: "08:00"}
 franjas: []
+
+# --- reglas por zona / personas (bloque 4) ---------------------------------
+# Segundos para que un conocido dispare permanencia (0 = nunca).
+permanencia_conocidos_seg: 0
+# Re-aviso mientras la persona sigue en la zona (0 = solo una vez).
+reaviso_min: 0
+# Merodeo: numero de re-entradas dentro de la ventana.
+merodeo_entradas: 3
+merodeo_ventana_seg: 120
+# Inmovilidad (posible caida); 0 lo desactiva.
+inmovil_seg: 0
+inmovil_px: 20
+# Maximo global de personas a la vez (0 = sin limite).
+max_personas: 0
 
 # --- media -----------------------------------------------------------------
 # Guardar un clip WebM de los segundos previos en los eventos importantes.
@@ -66,3 +97,33 @@ actividades: false
 # Caras: YuNet (deteccion) + SFace (identidad), modelos onnx descargados
 # automaticamente (~40MB) a `modelos/`. Conocidos en la tabla `rostros`.
 caras: false
+
+# --- Telegram (bloque 2) ---------------------------------------------------
+# Los secretos NO van aqui: TELEGRAM_TOKEN y TELEGRAM_CHAT_ID en `.env`
+# (o en el entorno). Aqui solo se activa y se ajusta el comportamiento.
+telegram: false
+# Prioridad por tipo de evento: info (no se envia), aviso o critico.
+telegram_prioridades:
+  cara_desconocida: critico
+  permanencia: aviso
+  objeto_desaparece: aviso
+  zona_restringida: critico
+  demasiadas_personas: aviso
+  merodeo: aviso
+  persona_inmovil: critico
+  persona_entra: info
+  persona_salio: info
+# Anti-spam: maximo de avisos por hora y espera por (tipo, persona/zona).
+telegram_max_hora: 20
+telegram_cooldown_seg: 300
+
+# --- armado ----------------------------------------------------------------
+# false = solo manual (boton, /armar y /desarmar). Con true se arma solo
+# dentro de `armado_franjas` (si esta vacio, usa `franjas`).
+armado_auto: false
+armado_franjas: []
+
+# --- avisos del sistema ----------------------------------------------------
+# Camara caida durante X segundos y aviso si el disco baja de X GB.
+avisos_camara_seg: 300
+avisos_disco_gb: 5

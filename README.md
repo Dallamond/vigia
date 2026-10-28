@@ -47,10 +47,21 @@ python -m vigia.main        # tecla q para salir
 python -m vigia.web         # http://localhost:8000
 ```
 
-Por defecto solo escucha en `127.0.0.1`. Para verlo desde otro dispositivo de
-la red local: `set VIGIA_HOST=0.0.0.0` (y `VIGIA_PUERTO` si quieres otro puerto).
-**No hay autenticación**: quien llegue al puerto ve la cámara; úsalo solo en una
-red de confianza.
+Por defecto escucha en `127.0.0.1:8000` (configurable en `config.yaml`; las
+variables `VIGIA_HOST` / `VIGIA_PUERTO` ganan). Para verlo desde otro
+dispositivo de la red local **define un token**:
+
+```bash
+set VIGIA_HOST=0.0.0.0
+set VIGIA_TOKEN=algo-largo-y-secreto
+```
+
+Copia `.env.example` a `.env` para no repetir las variables. Sin `VIGIA_TOKEN`
+Vigia solo atiende a `127.0.0.1` y se niega a arrancar si `host` no es local.
+Con token, la API y el vídeo exigen `Authorization: Bearer`, la cookie
+`vigia_token` (la pone `/auth/login`) o `?token=` solo en `/video.mjpg` y
+`/snapshot.jpg`. El HTML y los estáticos quedan públicos para poder mostrar el
+login.
 
 El panel (`vigia/static/index.html`) trae:
 
@@ -85,6 +96,46 @@ Rutas:
 | `/config` | `GET`/`POST` ajustes en caliente |
 | `/actividades` | JSON `{id: actividad}` (si `actividades: true`) |
 | `/salud` | uptime, tamaño de BD, clips y espacio libre en disco |
+| `/auth/estado` | `{auth_requerida, autenticado}` (siempre accesible) |
+| `/auth/login` | `POST {"token"}`: pone la cookie; 401 si es incorrecto |
+| `/auth/logout` | `POST`: borra la cookie |
+| `/armado` | `GET` estado; `POST {"armado": bool, "auto": bool}` |
+| `/telegram/estado` | configurado, último error y último envío (sin secretos) |
+| `/telegram/prueba` | `POST`: manda un mensaje de prueba |
+
+### Zonas y reglas
+
+`GET /zonas` devuelve objetos (el formato antiguo de `config.yaml` se sigue
+leyendo). Ejemplo de una zona y de lo que acepta `PUT /zonas`:
+
+```json
+{"zonas": {"puerta": {
+  "caja": [0, 0, 200, 480],
+  "permanencia_seg": 20,
+  "franjas": [{"desde": "22:00", "hasta": "08:00"}],
+  "restringida": false,
+  "excluir": false,
+  "max_personas": 0,
+  "vigilar": ["laptop"],
+  "conocidos": true
+}}}
+```
+
+También se admite `"poligono": [[x, y], ...]` en vez de `"caja"` (nunca los
+dos). Las reglas nuevas generan eventos `zona_restringida`,
+`demasiadas_personas`, `merodeo` y `persona_inmovil`, además de la permanencia
+por zona con re-aviso.
+
+### Telegram
+
+Rellena `TELEGRAM_TOKEN` y `TELEGRAM_CHAT_ID` en `.env`, pon `telegram: true`
+en `config.yaml` y reinicia. El bot funciona por *long polling* (no abre
+puertos), solo atiende al chat autorizado y acepta `/armar`, `/desarmar`,
+`/estado` y `/foto`. Los avisos incluyen miniatura y, cuando el clip WebM ya
+está escrito, el vídeo. El envío va en un hilo aparte: nunca frena la
+detección. Los clientes móviles que no reproduzcan WebM necesitarían conversión
+a MP4 H.264 con ffmpeg (pendiente, documentado en `vigia/telegram.py`).
+
 
 ## Configuración
 
@@ -96,6 +147,7 @@ Casi todo se puede cambiar desde el panel, sin reiniciar.
 | Clave | Por defecto | Qué hace |
 |---|---|---|
 | `almacen` | `vigia.db` | fichero SQLite de eventos |
+| `host` / `puerto` | `127.0.0.1` / `8000` | dónde escucha el panel (el entorno gana) |
 | `camara` | `0` | índice de la webcam (se cambia en caliente) |
 | `ancho` / `alto` | `640` / `480` | resolución de captura (requiere reiniciar) |
 | `permanencia_seg` | `30` | segundos para disparar `permanencia` |
@@ -113,6 +165,16 @@ Casi todo se puede cambiar desde el panel, sin reiniciar.
 | `notificar` | `true` | toast de Windows en `permanencia` y objetos desaparecidos |
 | `actividades` | `false` | segunda pasada de pose (más FPS de coste) |
 | `caras` | `false` | reconocimiento de caras (YuNet + SFace, local) |
+| `permanencia_conocidos_seg` | `0` | permanencia para conocidos (`0` = nunca) |
+| `reaviso_min` | `0` | re-aviso mientras la persona sigue (`0` = una vez) |
+| `merodeo_entradas` / `merodeo_ventana_seg` | `3` / `120` | re-entradas para `merodeo` |
+| `inmovil_seg` / `inmovil_px` | `0` / `20` | inmovilidad (posible caída); `0` desactiva |
+| `max_personas` | `0` | máximo global de personas (`0` = sin límite) |
+| `telegram` | `false` | activa el bot y los avisos (secretos en `.env`) |
+| `telegram_prioridades` | ver ejemplo | `info` / `aviso` / `critico` por tipo |
+| `telegram_max_hora` / `telegram_cooldown_seg` | `20` / `300` | anti-spam |
+| `armado_auto` / `armado_franjas` | `false` / `[]` | armado automático por franjas |
+| `avisos_camara_seg` / `avisos_disco_gb` | `300` / `5` | avisos del sistema |
 
 ### Mantenimiento y logs
 
