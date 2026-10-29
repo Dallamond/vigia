@@ -42,6 +42,7 @@ from .clips import GuardadorClips
 from .analisis import AnalisisAsincrono, ModuloActividades, ModuloCaras
 from .analisis import _iou, persona_de_pose as _persona_de_pose  # noqa: F401
 from .caras import embedding_valido
+from .galeria import GaleriaDesconocidos
 from .clips import EXT_CLIP
 from .config import RAIZ, cargar_config, ruta_proyecto
 from .detector import Deteccion, Detector
@@ -357,7 +358,9 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     mod_caras = ModuloCaras(
         cargar_conocidos=lambda: _conocidos(almacen),
         recarga=bucle_caras_recarga, al_ver_cara=_publicar_cara,
-        cada_n_frames=2 if asincrono else None)
+        cada_n_frames=2 if asincrono else None,
+        al_ver_desconocida=(_galeria if almacen is _almacen
+                            else GaleriaDesconocidos(almacen)).ver)
     analisis = (AnalisisAsincrono(mod_actividades, mod_caras,
                                   _publicar_actividades)
                 if asincrono else None)
@@ -566,6 +569,7 @@ estado = Estado()
 cargar_env()
 _config = cargar_config()
 _almacen = Almacen(ruta_proyecto(_config.get("almacen", "vigia.db")))
+_galeria = GaleriaDesconocidos(_almacen)
 # se crea siempre: el buffer solo se llena con guardar_clips=true, pero los
 # endpoints /clips y /media siguen sirviendo lo que ya hay en disco y el
 # interruptor del panel funciona en caliente
@@ -806,7 +810,8 @@ def index() -> str:
 
 
 @app.get("/video.mjpg")
-def video() -> StreamingResponse:
+def video(limpio: bool = False) -> StreamingResponse:
+    """MJPEG en vivo. `?limpio=1`: sin cajas ni texto (la GUI las dibuja encima)."""
     def gen():
         vistos = -1
         while True:
@@ -814,7 +819,11 @@ def video() -> StreamingResponse:
                 estado.condicion.wait_for(
                     lambda: estado.version != vistos, timeout=1.0)
                 jpeg = estado.frame_jpeg
+                crudo = (estado.frame_crudo
+                         if limpio and estado.camara_ok else None)
                 vistos = estado.version
+            if crudo is not None:
+                jpeg = _jpeg(crudo) or jpeg
             if jpeg:
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
                        + str(len(jpeg)).encode() + b"\r\n\r\n"
@@ -1256,7 +1265,8 @@ async def caras_registrar(datos: dict) -> dict:
         if ficha is None:
             raise HTTPException(
                 409, "no se ve ninguna cara: ponte frente a la camara")
-        _almacen.guardar_rostro(nombre, ficha["emb"].tobytes())
+        _almacen.guardar_rostro(nombre, ficha["emb"].tobytes(),
+                                ficha.get("jpeg") or None)
     elif datos.get("embedding") is not None:
         try:
             emb = embedding_valido(datos["embedding"])
@@ -1273,6 +1283,89 @@ async def caras_registrar(datos: dict) -> dict:
 def caras_borrar(id_entrada: int) -> dict:
     if not _almacen.borrar_rostro(id_entrada):
         raise HTTPException(404, "entrada no encontrada")
+    bucle_caras_recarga.set()
+    return {"ok": True}
+
+
+@app.get("/caras/personas")
+def caras_personas(response: Response) -> dict:
+    """Galeria: personas conocidas (con sus tomas) y caras sin identificar."""
+    response.headers["Cache-Control"] = "no-store"
+    conocidas: dict[str, list[dict]] = {}
+    for r in _almacen.rostros_con_foto():
+        conocidas.setdefault(r["nombre"], []).append(
+            {"id": r["id"], "foto": r["foto"], "creado": r["creado"]})
+    return {
+        "conocidas": [{"nombre": n, "tomas": t} for n, t in conocidas.items()],
+        "desconocidas": _almacen.listar_desconocidos(),
+    }
+
+
+def _jpeg_o_404(datos: bytes | None) -> Response:
+    if not datos:
+        raise HTTPException(404, "sin foto")
+    return Response(content=datos, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/caras/foto/rostro/{id_rostro}")
+def caras_foto_rostro(id_rostro: int) -> Response:
+    return _jpeg_o_404(_almacen.foto_rostro(id_rostro))
+
+
+@app.get("/caras/foto/toma/{id_toma}")
+def caras_foto_toma(id_toma: int) -> Response:
+    return _jpeg_o_404(_almacen.foto_toma(id_toma))
+
+
+@app.post("/caras/desconocidas/{id_grupo}/nombrar")
+async def caras_nombrar_desconocida(id_grupo: int, datos: dict) -> dict:
+    """Le pone nombre a una cara sin identificar: pasa a ser persona conocida."""
+    nombre = _nombre_valido(datos or {})
+    n = _almacen.promover_desconocido(id_grupo, nombre)
+    if not n:
+        raise HTTPException(404, "grupo no encontrado")
+    _galeria.olvidar_cache()
+    bucle_caras_recarga.set()
+    return {"ok": True, "muestras": n}
+
+
+@app.delete("/caras/desconocidas/{id_grupo}")
+def caras_borrar_desconocida(id_grupo: int) -> dict:
+    if not _almacen.borrar_desconocido(id_grupo):
+        raise HTTPException(404, "grupo no encontrado")
+    _galeria.olvidar_cache()
+    return {"ok": True}
+
+
+@app.post("/caras/persona/renombrar")
+async def caras_renombrar_persona(datos: dict) -> dict:
+    datos = datos or {}
+    de = str(datos.get("de", "")).strip()
+    a = _nombre_valido({"nombre": datos.get("a", "")})
+    if not de or not _almacen.renombrar_persona(de, a):
+        raise HTTPException(404, "persona no encontrada")
+    bucle_caras_recarga.set()
+    return {"ok": True}
+
+
+@app.post("/caras/persona/tomar")
+async def caras_tomar_para(datos: dict) -> dict:
+    """Anade otra muestra (la cara que se ve ahora) a una persona conocida."""
+    nombre = _nombre_valido(datos or {})
+    ficha = _cara_vigente()
+    if ficha is None:
+        raise HTTPException(409, "no se ve ninguna cara: ponte frente a la camara")
+    _almacen.guardar_rostro(nombre, ficha["emb"].tobytes(),
+                            ficha.get("jpeg") or None)
+    bucle_caras_recarga.set()
+    return {"ok": True}
+
+
+@app.delete("/caras/persona")
+def caras_borrar_persona(nombre: str) -> dict:
+    if not _almacen.borrar_persona(nombre.strip()):
+        raise HTTPException(404, "persona no encontrada")
     bucle_caras_recarga.set()
     return {"ok": True}
 

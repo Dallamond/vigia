@@ -229,12 +229,15 @@ class ModuloCaras:
     DESCONOCIDA_SEG = 120.0     # cooldown de "cara desconocida" por persona
     OLVIDO_SEG = 60.0           # una persona que no se ve se borra de memoria
     CONF_MINIMA = 0.7
+    CONF_GALERIA = 0.85         # a la galeria solo caras claras (no ropa ni sombras)
 
     def __init__(self, cargar_conocidos: Callable[[], dict],
                  recarga: threading.Event,
                  al_ver_cara: Callable[[dict], None] | None = None,
                  fabrica: Callable[[], object] = CarasDetector,
-                 cada_n_frames: int | None = None):
+                 cada_n_frames: int | None = None,
+                 al_ver_desconocida: Callable[[dict], None] | None = None):
+        self._al_ver_desconocida = al_ver_desconocida
         if cada_n_frames is not None:
             self.CADA_N_FRAMES = max(1, int(cada_n_frames))
         self._cargar_conocidos = cargar_conocidos
@@ -312,6 +315,9 @@ class ModuloCaras:
                     self._aviso_desconocida[pid] = ahora
                     eventos.append(("cara_desconocida",
                                     f"id {pid} sin identificar", pid))
+            if (nombre is None and self._al_ver_desconocida is not None
+                    and cara["conf"] >= self.CONF_GALERIA):
+                self._al_ver_desconocida(self._ficha(frame, cara, ahora))
             caras_pub.append({"caja": cara["caja"], "nombre": nombre})
         vivo.publicar_caras(caras_pub)
         if mejor is not None and self._al_ver_cara is not None:

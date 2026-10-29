@@ -16,9 +16,22 @@ const HUESOS = {
   cabeza: [[0, 1], [0, 2], [1, 3], [2, 4], [0, 5], [0, 6]],
 };
 
+// El canvas no entiende light-dark()/var(): se deja que el navegador resuelva
+// el color en un elemento sonda y se lee ya como rgb().
+let _sonda = null;
 function css(nombre, defecto) {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
-  return v || defecto;
+  try {
+    if (!_sonda) {
+      _sonda = document.createElement('span');
+      _sonda.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden;pointer-events:none';
+      document.body.appendChild(_sonda);
+    }
+    _sonda.style.color = '';
+    _sonda.style.color = `var(${nombre}, ${defecto})`;
+    return getComputedStyle(_sonda).color || defecto;
+  } catch (e) {
+    return defecto;
+  }
 }
 
 export class Overlay {

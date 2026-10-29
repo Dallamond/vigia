@@ -31,6 +31,20 @@ CREATE TABLE IF NOT EXISTS rostros (
     embedding BLOB NOT NULL,
     creado DATETIME NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desconocidos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    primera DATETIME NOT NULL,
+    ultima DATETIME NOT NULL,
+    veces INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS tomas_desconocido (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    desconocido_id INTEGER NOT NULL,
+    embedding BLOB NOT NULL,
+    foto BLOB,
+    creada DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tomas_desc ON tomas_desconocido(desconocido_id);
 CREATE TABLE IF NOT EXISTS estado_sistema (
     clave TEXT PRIMARY KEY,
     valor TEXT,
@@ -160,6 +174,9 @@ class Almacen:
                 self.con.execute(
                     f"ALTER TABLE eventos ADD COLUMN {nombre} {tipo}")
                 log.info("BD migrada: columna %s anadida", nombre)
+        if "foto" not in {f[1] for f in self.con.execute(
+                "PRAGMA table_info(rostros)")}:
+            self.con.execute("ALTER TABLE rostros ADD COLUMN foto BLOB")
         # indices sobre columnas migradas (no pueden ir en _ESQUEMA porque una
         # BD antigua aun no las tiene cuando se ejecuta)
         self.con.execute(
@@ -515,15 +532,152 @@ class Almacen:
             self.con.commit()
 
     # -- rostros (identidad) ------------------------------------------------
-    def guardar_rostro(self, nombre: str, embedding: bytes) -> int:
-        """Registra una identidad conocida. Devuelve su id."""
+    def guardar_rostro(self, nombre: str, embedding: bytes,
+                       foto: bytes | None = None) -> int:
+        """Registra una identidad conocida (con su foto, si la hay). Devuelve su id."""
         creado = datetime.now().strftime(_FORMATO)
         with self._lock:
             cur = self.con.execute(
-                "INSERT INTO rostros (nombre, embedding, creado) VALUES (?, ?, ?)",
-                (nombre, bytes(embedding), creado))
+                "INSERT INTO rostros (nombre, embedding, creado, foto) "
+                "VALUES (?, ?, ?, ?)",
+                (nombre, bytes(embedding), creado, foto or None))
             self.con.commit()
             return int(cur.lastrowid or 0)
+
+    def rostros_con_foto(self) -> list[dict]:
+        """Muestras de las personas conocidas: id, nombre y si tienen foto."""
+        with self._lock:
+            filas = self.con.execute(
+                "SELECT id, nombre, foto IS NOT NULL AND length(foto) > 0, creado "
+                "FROM rostros ORDER BY id").fetchall()
+        return [{"id": i, "nombre": n, "foto": bool(f), "creado": c}
+                for i, n, f, c in filas]
+
+    def foto_rostro(self, id_rostro: int) -> bytes | None:
+        with self._lock:
+            fila = self.con.execute("SELECT foto FROM rostros WHERE id = ?",
+                                    (int(id_rostro),)).fetchone()
+        return bytes(fila[0]) if fila and fila[0] else None
+
+    def renombrar_persona(self, de: str, a: str) -> int:
+        """Renombra todas las muestras de una persona. Devuelve cuantas."""
+        with self._lock:
+            cur = self.con.execute(
+                "UPDATE rostros SET nombre = ? WHERE nombre = ?", (a, de))
+            self.con.commit()
+        return cur.rowcount or 0
+
+    def borrar_persona(self, nombre: str) -> int:
+        """Elimina todas las muestras de una persona. Devuelve cuantas."""
+        with self._lock:
+            cur = self.con.execute("DELETE FROM rostros WHERE nombre = ?",
+                                   (nombre,))
+            self.con.commit()
+        return cur.rowcount or 0
+
+    # -- caras sin identificar (agrupadas por parecido) ----------------------
+    def desconocidos_tomas(self) -> list[tuple[int, int, bytes]]:
+        """(id_toma, id_grupo, embedding) de todas las tomas guardadas."""
+        with self._lock:
+            filas = self.con.execute(
+                "SELECT id, desconocido_id, embedding FROM tomas_desconocido"
+            ).fetchall()
+        return [(i, g, bytes(e)) for i, g, e in filas]
+
+    def nuevo_desconocido(self) -> int:
+        ahora = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            cur = self.con.execute(
+                "INSERT INTO desconocidos (primera, ultima, veces) VALUES (?, ?, 1)",
+                (ahora, ahora))
+            self.con.commit()
+            return int(cur.lastrowid or 0)
+
+    def tocar_desconocido(self, id_grupo: int) -> None:
+        ahora = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            self.con.execute(
+                "UPDATE desconocidos SET ultima = ?, veces = veces + 1 WHERE id = ?",
+                (ahora, int(id_grupo)))
+            self.con.commit()
+
+    def anadir_toma_desconocido(self, id_grupo: int, embedding: bytes,
+                                foto: bytes | None) -> int:
+        ahora = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            cur = self.con.execute(
+                "INSERT INTO tomas_desconocido (desconocido_id, embedding, foto, "
+                "creada) VALUES (?, ?, ?, ?)",
+                (int(id_grupo), bytes(embedding), foto or None, ahora))
+            self.con.commit()
+            return int(cur.lastrowid or 0)
+
+    def listar_desconocidos(self) -> list[dict]:
+        """Grupos de caras sin identificar, los vistos hace poco primero."""
+        with self._lock:
+            grupos = self.con.execute(
+                "SELECT id, primera, ultima, veces FROM desconocidos "
+                "ORDER BY ultima DESC").fetchall()
+            tomas = self.con.execute(
+                "SELECT id, desconocido_id FROM tomas_desconocido "
+                "WHERE foto IS NOT NULL ORDER BY id").fetchall()
+        por_grupo: dict[int, list[int]] = {}
+        for i, g in tomas:
+            por_grupo.setdefault(g, []).append(i)
+        return [{"id": g, "primera": p, "ultima": u, "veces": v,
+                 "tomas": por_grupo.get(g, [])} for g, p, u, v in grupos]
+
+    def foto_toma(self, id_toma: int) -> bytes | None:
+        with self._lock:
+            fila = self.con.execute(
+                "SELECT foto FROM tomas_desconocido WHERE id = ?",
+                (int(id_toma),)).fetchone()
+        return bytes(fila[0]) if fila and fila[0] else None
+
+    def borrar_desconocido(self, id_grupo: int) -> bool:
+        with self._lock:
+            self.con.execute(
+                "DELETE FROM tomas_desconocido WHERE desconocido_id = ?",
+                (int(id_grupo),))
+            cur = self.con.execute("DELETE FROM desconocidos WHERE id = ?",
+                                   (int(id_grupo),))
+            self.con.commit()
+        return (cur.rowcount or 0) > 0
+
+    def promover_desconocido(self, id_grupo: int, nombre: str) -> int:
+        """Convierte un grupo en persona conocida: cada toma pasa a ser una
+        muestra registrada con `nombre`. Devuelve cuantas muestras."""
+        creado = datetime.now().strftime(_FORMATO)
+        with self._lock:
+            tomas = self.con.execute(
+                "SELECT embedding, foto FROM tomas_desconocido "
+                "WHERE desconocido_id = ? ORDER BY id", (int(id_grupo),)).fetchall()
+            if not tomas:
+                return 0
+            for emb, foto in tomas:
+                self.con.execute(
+                    "INSERT INTO rostros (nombre, embedding, creado, foto) "
+                    "VALUES (?, ?, ?, ?)", (nombre, emb, creado, foto))
+            self.con.execute(
+                "DELETE FROM tomas_desconocido WHERE desconocido_id = ?",
+                (int(id_grupo),))
+            self.con.execute("DELETE FROM desconocidos WHERE id = ?",
+                             (int(id_grupo),))
+            self.con.commit()
+        return len(tomas)
+
+    def podar_desconocidos(self, maximo: int) -> None:
+        """Conserva solo los `maximo` grupos vistos mas recientemente."""
+        with self._lock:
+            viejos = [r[0] for r in self.con.execute(
+                "SELECT id FROM desconocidos ORDER BY ultima DESC LIMIT -1 OFFSET ?",
+                (int(maximo),)).fetchall()]
+            for g in viejos:
+                self.con.execute(
+                    "DELETE FROM tomas_desconocido WHERE desconocido_id = ?", (g,))
+                self.con.execute("DELETE FROM desconocidos WHERE id = ?", (g,))
+            if viejos:
+                self.con.commit()
 
     def rostros(self) -> list[dict]:
         """Identidades conocidas (id, nombre, embedding como bytes)."""

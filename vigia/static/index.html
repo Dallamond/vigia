@@ -266,7 +266,7 @@
 <section class="vista" data-vista="personas" hidden>
   <div class="layout">
     <section class="card">
-      <div class="card-head"><h2>Personas conocidas</h2><span class="chip" id="carasCount">0</span></div>
+      <div class="card-head"><h2>Personas</h2><span class="chip" id="carasCount">0</span></div>
       <div class="pad">
         <p class="hint lead">
           Colócate frente a la cámara y registra tu cara. Puedes añadir varias
@@ -285,7 +285,12 @@
             </div>
           </div>
         </div>
-        <div class="lista-caras" id="cLista"></div>
+        <h3 class="sub">Conocidas <span class="chip" id="cConCount">0</span></h3>
+        <div class="galeria" id="cConocidas"></div>
+        <h3 class="sub">Sin identificar <span class="chip" id="cDesCount">0</span></h3>
+        <p class="hint">Caras que la cámara ha visto y no coinciden con nadie registrado,
+          agrupadas por parecido con varias tomas. Ponles nombre para registrarlas o descártalas.</p>
+        <div class="galeria" id="cDesconocidas"></div>
       </div>
     </section>
 
