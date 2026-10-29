@@ -27,6 +27,7 @@ export class Overlay {
     this.activo = false;
     this.visible = true;
     this.ultimo = null;
+    this._limpio = false;
     this._timer = null;
     this._ctrl = null;
     try { this.visible = localStorage.getItem('vigia.overlay') !== '0'; } catch (e) { /* nada */ }
@@ -35,6 +36,7 @@ export class Overlay {
       toggle.checked = this.visible;
       toggle.addEventListener('change', () => {
         this.visible = toggle.checked;
+        this._modo(this.visible && this.ultimo != null);
         try { localStorage.setItem('vigia.overlay', this.visible ? '1' : '0'); } catch (e) { /* nada */ }
         this.pintar();
       });
@@ -42,6 +44,13 @@ export class Overlay {
     if (this.canvas && 'ResizeObserver' in window) {
       new ResizeObserver(() => this.pintar()).observe(this.canvas);
     }
+  }
+
+  /** El vídeo va sin anotaciones mientras el overlay dibuja encima. */
+  _modo(limpio) {
+    if (limpio === this._limpio) return;
+    this._limpio = limpio;
+    window.dispatchEvent(new CustomEvent('vigia:overlay', { detail: { limpio } }));
   }
 
   activar() {
@@ -55,6 +64,7 @@ export class Overlay {
     clearTimeout(this._timer);
     if (this._ctrl) this._ctrl.abort();
     this.ultimo = null;
+    this._limpio = false;
     this.pintar();
   }
 
@@ -69,10 +79,12 @@ export class Overlay {
         const r = await fetch('/vivo', { credentials: 'same-origin', cache: 'no-store', signal: this._ctrl.signal });
         if (r.status === 404) {
           this.ultimo = null;
+          this._modo(false);
           espera = REINTENTO_404;
         } else if (r.ok) {
           this.ultimo = await r.json();
           window.dispatchEvent(new CustomEvent('vigia:vivo', { detail: this.ultimo }));
+          this._modo(this.visible);
         } else {
           espera = 2000;
         }

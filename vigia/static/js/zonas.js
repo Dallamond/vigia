@@ -46,6 +46,8 @@ export class EditorZonas {
     this.zonas = [];
     this.dims = { ancho: 640, alto: 480 };
     this.soporteNuevo = false;
+    this.lineas = [];           // [{nombre,p1,p2,sentido,margen_px,cooldown_seg}]
+    this.soporteLineas = false;
     this.modo = 'caja';
     this.arrastre = null;
     this.poligono = null;      // puntos en construcción
@@ -84,8 +86,32 @@ export class EditorZonas {
       if (e.estado !== 401) toast('Zonas: ' + e.message, false);
       this.zonas = [];
     }
+    await this._cargarLineas();
     this._pintarLista();
     await this.captura();
+  }
+
+  async _cargarLineas() {
+    try {
+      const d = await api('/lineas', { tolerante: true });
+      this.soporteLineas = d != null;
+      this.lineas = d ? Object.entries(d.lineas || {}).map(([nombre, l]) => ({
+        nombre,
+        p1: (l.p1 || [0, 0]).map(Number),
+        p2: (l.p2 || [0, 0]).map(Number),
+        sentido: l.sentido || 'ambos',
+        margen_px: l.margen_px ?? 6,
+        cooldown_seg: l.cooldown_seg ?? 2,
+      })) : [];
+    } catch (e) {
+      this.soporteLineas = false;
+      this.lineas = [];
+    }
+    const boton = document.querySelector('#zModo [data-modo="linea"]');
+    if (boton) boton.hidden = !this.soporteLineas;
+    const tarjeta = $('zLineasCard');
+    if (tarjeta) tarjeta.hidden = !this.soporteLineas;
+    this._pintarListaLineas();
   }
 
   _avisoFormato() {
@@ -185,7 +211,11 @@ export class EditorZonas {
       ctx.restore();
     });
 
-    if (this.arrastre) {
+    this.lineas.forEach((l) => this._pintarLinea(ctx, l));
+    if (this.arrastre && this.arrastre.linea) {
+      this._pintarLinea(ctx, { nombre: '', p1: [this.arrastre.x1, this.arrastre.y1],
+        p2: [this.arrastre.x2, this.arrastre.y2], sentido: 'ambos' }, true);
+    } else if (this.arrastre) {
       ctx.save();
       ctx.strokeStyle = this.modo === 'excluir' ? '#f87171' : '#e6edf5';
       ctx.setLineDash([6, 5]);
@@ -206,6 +236,107 @@ export class EditorZonas {
       for (const [x, y] of this.poligono) ctx.fillRect(x - 3, y - 3, 6, 6);
       ctx.restore();
     }
+  }
+
+  _pintarLinea(ctx, l, borrador = false) {
+    const [x1, y1] = l.p1;
+    const [x2, y2] = l.p2;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const largo = Math.hypot(dx, dy) || 1;
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    // lado A = izquierda del vector p1->p2 (producto vectorial > 0); B = derecha
+    const nbx = dy / largo;
+    const nby = -dx / largo;
+    const color = '#22d3ee';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+    ctx.setLineDash(borrador ? [6, 5] : []);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const [x, y] of [[x1, y1], [x2, y2]]) {
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const flecha = (sx, sy, ex, ey) => {
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      const ang = Math.atan2(ey - sy, ex - sx);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - 10 * Math.cos(ang - 0.45), ey - 10 * Math.sin(ang - 0.45));
+      ctx.lineTo(ex - 10 * Math.cos(ang + 0.45), ey - 10 * Math.sin(ang + 0.45));
+      ctx.closePath();
+      ctx.fill();
+    };
+    ctx.lineWidth = 2;
+    const L = 34;
+    // la flecha A→B apunta hacia el lado B (derecha del vector)
+    if (l.sentido !== 'b_a') flecha(mx - nbx * 4, my - nby * 4, mx + nbx * L, my + nby * L);
+    if (l.sentido !== 'a_b') flecha(mx + nbx * 4, my + nby * 4, mx - nbx * L, my - nby * L);
+    ctx.font = '700 13px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const marca = (txt, px, py) => {
+      ctx.fillStyle = 'rgba(0,0,0,.62)';
+      ctx.fillRect(px - 11, py - 10, 22, 20);
+      ctx.fillStyle = color;
+      ctx.fillText(txt, px, py);
+    };
+    marca('A', mx - nbx * (L + 18), my - nby * (L + 18));
+    marca('B', mx + nbx * (L + 18), my + nby * (L + 18));
+    if (l.nombre) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(0,0,0,.62)';
+      const ancho = Math.max(60, l.nombre.length * 8 + 14);
+      ctx.fillRect(x1, Math.max(0, y1 - 24), ancho, 22);
+      ctx.fillStyle = color;
+      ctx.fillText(l.nombre, x1 + 6, Math.max(11, y1 - 13));
+    }
+    ctx.restore();
+  }
+
+  _pintarListaLineas() {
+    const lista = $('lList');
+    if (!lista) return;
+    if (!this.lineas.length) {
+      lista.innerHTML = '<div class="empty">sin líneas: elige «Línea» y arrastra sobre la imagen (p. ej. en la puerta)</div>';
+      return;
+    }
+    lista.innerHTML = this.lineas.map((l, i) => `<div class="zitem" data-linea="${i}">
+      <div class="cabecera">
+        <input type="text" data-lnombre="${i}" value="${esc(l.nombre)}" maxlength="60" aria-label="Nombre de la línea">
+        <button type="button" class="btn sm ghost" data-invertir="${i}" title="Intercambia los lados A y B">Invertir</button>
+        <button type="button" class="btn sm danger" data-lborrar="${i}" aria-label="Borrar línea ${esc(l.nombre)}">✕</button>
+      </div>
+      <div class="reglas">
+        <label>Sentido que avisa
+          <select data-lcampo="sentido">
+            <option value="ambos"${l.sentido === 'ambos' ? ' selected' : ''}>los dos (A↔B)</option>
+            <option value="a_b"${l.sentido === 'a_b' ? ' selected' : ''}>solo A→B</option>
+            <option value="b_a"${l.sentido === 'b_a' ? ' selected' : ''}>solo B→A</option>
+          </select>
+        </label>
+        <label>Espera entre avisos (seg)
+          <input type="number" min="0" step="1" data-lcampo="cooldown_seg" value="${l.cooldown_seg}">
+        </label>
+      </div>
+    </div>`).join('');
+  }
+
+  _nuevoNombreLinea() {
+    let n = 1;
+    while (this.lineas.some((l) => l.nombre === 'linea' + n)) n++;
+    return 'linea' + n;
   }
 
   _pintarLista() {
@@ -293,6 +424,8 @@ export class EditorZonas {
         if (ayuda) {
           ayuda.textContent = this.modo === 'poligono'
             ? 'Haz clic en cada vértice; cierra con doble clic, Intro o el botón «Cerrar polígono».'
+            : this.modo === 'linea'
+              ? 'Arrastra para trazar una línea de cruce (p. ej. la puerta). Avisa cuando alguien la atraviesa; A y B marcan los lados.'
             : this.modo === 'excluir'
               ? 'Arrastra para marcar una zona de exclusión (póster, espejo): lo que caiga dentro se ignora.'
               : 'Arrastra sobre la imagen para dibujar una zona rectangular.';
@@ -304,7 +437,7 @@ export class EditorZonas {
     cv.addEventListener('pointerdown', (ev) => {
       if (this.modo === 'poligono' || this.modo === 'excluir') return;
       const [x, y] = this._coords(ev);
-      this.arrastre = { x1: x, y1: y, x2: x, y2: y };
+      this.arrastre = { x1: x, y1: y, x2: x, y2: y, linea: this.modo === 'linea' };
       cv.setPointerCapture(ev.pointerId);
     });
     cv.addEventListener('pointermove', (ev) => {
@@ -322,6 +455,14 @@ export class EditorZonas {
       if (!this.arrastre) return;
       const a = this.arrastre;
       this.arrastre = null;
+      if (a.linea) {
+        if (Math.hypot(a.x2 - a.x1, a.y2 - a.y1) < 24) { this.pintar(); return; }
+        this.lineas.push({ nombre: this._nuevoNombreLinea(), p1: [a.x1, a.y1], p2: [a.x2, a.y2],
+          sentido: 'ambos', margen_px: 6, cooldown_seg: 2 });
+        this._pintarListaLineas();
+        this.pintar();
+        return;
+      }
       const x1 = Math.min(a.x1, a.x2);
       const x2 = Math.max(a.x1, a.x2);
       const y1 = Math.min(a.y1, a.y2);
@@ -363,6 +504,39 @@ export class EditorZonas {
     if (captura) captura.addEventListener('click', () => this.captura());
     const guardar = $('zGuardar');
     if (guardar) guardar.addEventListener('click', () => this.guardar());
+
+    const ll = $('lList');
+    if (ll) {
+      ll.addEventListener('click', (ev) => {
+        const borrar = ev.target.closest('[data-lborrar]');
+        const invertir = ev.target.closest('[data-invertir]');
+        if (borrar) this.lineas.splice(Number(borrar.dataset.lborrar), 1);
+        else if (invertir) {
+          const l = this.lineas[Number(invertir.dataset.invertir)];
+          if (l) [l.p1, l.p2] = [l.p2, l.p1];
+        } else return;
+        this._pintarListaLineas();
+        this.pintar();
+      });
+      ll.addEventListener('change', (ev) => {
+        const item = ev.target.closest('[data-linea]');
+        const l = item && this.lineas[Number(item.dataset.linea)];
+        if (!l) return;
+        if (ev.target.matches('[data-lnombre]')) {
+          const nuevo = ev.target.value.trim().slice(0, 60);
+          if (!nuevo || this.lineas.some((o) => o !== l && o.nombre === nuevo)) {
+            ev.target.value = l.nombre;
+            if (nuevo) toast('Ya existe una línea con ese nombre', false);
+            return;
+          }
+          l.nombre = nuevo;
+        } else if (ev.target.matches('[data-lcampo]')) {
+          const c = ev.target.dataset.lcampo;
+          l[c] = c === 'sentido' ? ev.target.value : Math.max(0, Number(ev.target.value) || 0);
+        }
+        this.pintar();
+      });
+    }
 
     const lista = $('zList');
     if (lista) {
@@ -449,7 +623,15 @@ export class EditorZonas {
     }
     try {
       await api('/zonas', enJson('PUT', { zonas }));
-      toast('Zonas guardadas y aplicadas');
+      if (this.soporteLineas) {
+        const lineas = {};
+        for (const l of this.lineas) {
+          lineas[l.nombre] = { p1: l.p1, p2: l.p2, sentido: l.sentido,
+            margen_px: l.margen_px, cooldown_seg: l.cooldown_seg };
+        }
+        await api('/lineas', enJson('PUT', { lineas }));
+      }
+      toast('Zonas y líneas guardadas y aplicadas');
       await this.cargar();
     } catch (e) {
       toast('Zonas: ' + e.message, false);

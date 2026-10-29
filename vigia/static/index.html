@@ -319,6 +319,7 @@
             <button data-modo="caja" class="on" aria-pressed="true">Caja</button>
             <button data-modo="poligono" aria-pressed="false">Polígono</button>
             <button data-modo="excluir" aria-pressed="false">Exclusión</button>
+            <button data-modo="linea" aria-pressed="false" hidden>Línea</button>
           </div>
           <button class="btn sm ghost" id="zDeshacer" title="Quitar el último punto del polígono">Deshacer punto</button>
           <button class="btn sm ghost" id="zCaptura"><svg class="i s"><use href="#i-refrescar"/></svg>Nueva captura</button>
@@ -339,12 +340,20 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Zonas y sus reglas</h2><button class="btn sm primary derecha" id="zGuardar">Guardar zonas</button></div>
-      <div class="pad">
-        <div class="zlist" id="zList"></div>
-      </div>
-    </section>
+    <div class="col">
+      <section class="card">
+        <div class="card-head"><h2>Zonas y sus reglas</h2><button class="btn sm primary derecha" id="zGuardar">Guardar todo</button></div>
+        <div class="pad">
+          <div class="zlist" id="zList"></div>
+        </div>
+      </section>
+      <section class="card" id="zLineasCard" hidden>
+        <div class="card-head"><h2>Líneas de cruce</h2><span class="hint derecha">entradas y salidas por la puerta</span></div>
+        <div class="pad">
+          <div class="zlist" id="lList"></div>
+        </div>
+      </section>
+    </div>
   </div>
 </section>
 

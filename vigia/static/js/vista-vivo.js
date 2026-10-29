@@ -10,6 +10,9 @@ const TAMANOS = {
 };
 
 let vivoReciente = 0;
+let videoLimpio = false;
+
+const urlVideo = () => (videoLimpio ? '/video.mjpg?limpio=1' : '/video.mjpg');
 
 function tarjetaPersona(p) {
   const nombre = p.nombre || `Persona #${p.id}`;
@@ -39,6 +42,11 @@ function pintarPersonasVivo(d) {
 
 export function iniciarVivo(fuenteDatos) {
   window.addEventListener('vigia:vivo', (e) => pintarPersonasVivo(e.detail));
+  window.addEventListener('vigia:overlay', (e) => {
+    videoLimpio = !!e.detail.limpio;
+    const img = $('video');
+    if (img && img.getAttribute('src')) img.src = urlVideo();
+  });
   let guardado = null;
   try { guardado = localStorage.getItem('vigia.video'); } catch (e) { /* modo privado */ }
   aplicarTamano(guardado || 'fit');
@@ -61,7 +69,7 @@ export function iniciarVivo(fuenteDatos) {
   return {
     entrar() {
       const img = $('video');
-      if (img && !img.getAttribute('src')) img.src = '/video.mjpg';
+      if (img && !img.getAttribute('src')) img.src = urlVideo();
       if (fuenteDatos.salud) pintarSalud(fuenteDatos.salud);
     },
     salir() {
