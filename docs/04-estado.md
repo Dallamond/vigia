@@ -40,6 +40,8 @@
 | Ronda 3 — GUI v3 (29/10) | hecha | barra lateral, tokens light-dark, vista Resumen, overlay de esqueleto sobre el vídeo (/vivo), tarjetas de persona, galería de clips, eventos paginados, logs, SSE, líneas de cruce en el editor |
 | Ronda 3 — percepción | integrada, sin validar con cámara | pose suavizada (One-Euro), actividad por geometría normalizada, caídas, reasociación por apariencia, banco `eval/` |
 | Ronda 3 — eventos | integrada | /resumen /estadisticas /logs /eventos/stream, líneas de cruce, zona_entra/zona_sale, reglas de zona fuera de franja |
+| Personas (29/10) | hecho, probado con cámara real | galería de caras: conocidas con sus tomas (nombre editable, `+ toma`, eliminar) y «sin identificar» agrupadas por parecido con hasta 8 tomas (poner nombre = registrar, o descartar); `vigia/galeria.py`, `/caras/personas` y afines |
+| Overlay (29/10) | corregido | etiquetas con recuadro negro: el canvas no entiende `light-dark()`; ahora se resuelve el color con un elemento sonda. `/video.mjpg?limpio=1` implementado de verdad (faltaba en `web.py`) |
 | Pulido 28/10 | hecho | caras (cajas YuNet), IDs estables, actividad con votación, FPS 11→~22 (pose/caras y cámara en hilos), 960x540 |
 
 ## Registro de cambios
@@ -68,6 +70,8 @@
 
 | 2026-10-29 | **Ronda 3**: dos terminales (opencode) hicieron percepción (A) y eventos/plataforma (B) y se pararon a medias; Claude revisó, integró y commiteó su trabajo. Fallos reales corregidos al revisar: histéresis de líneas comparaba un producto vectorial (no píxeles), el cooldown inicial suprimía el primer cruce, y los objetos globales no se reiniciaban fuera de franja. 294 tests (16 nuevos en `tests/test_percepcion_ronda3.py`). GUI v3 completa hecha por Claude; `/video.mjpg?limpio=1` añadido. |
 | 2026-10-29 | **Verificacion con servidor real (Claude)**: 294 tests, endpoints de la ronda 3 en 200, modelos cargan, 21 fps. Camara 0 = Iriun apagado (video negro). Terminales A/B paradas por limite de uso; nada nuevo sin integrar. Pendientes reordenados en 'Tareas pendientes (29/10)'. |
+
+| 2026-10-29 | **Galería de personas + overlay (Claude)**: etiquetas del overlay legibles (colores resueltos con elemento sonda), `/video.mjpg?limpio=1` (el cambio no estaba en `web.py` pese a lo anotado), galería de caras con tomas por persona, nombrar/eliminar y desconocidas agrupadas por similitud (`galeria.py`, tablas `desconocidos`/`tomas_desconocido`, columna `rostros.foto`). Tests nuevos en `tests/test_galeria.py` (300). Tareas de multicámara/zonas y Telegram apuntadas en A+. |
 
 ## Datos técnicos acumulados
 
@@ -123,6 +127,16 @@ integrado y revisado; **lo no hecho es la lista B** (P3–P5 de `docs/prompts/`)
 - [ ] **Token**: crear `.env` con `VIGIA_TOKEN` antes de abrir el panel a la red.
 - [ ] **Docker/systemd/NSSM/Caddy**: probar en una máquina donde estén instalados.
 - [ ] **Cámara**: `config.yaml` sigue con `camara: 0`; elegir la del móvil.
+
+### A+. Próxima sesión (apuntado el 29/10 a petición de Lucas)
+- [ ] **Probar como un sistema de seguridad de verdad con varias cámaras y zonas**:
+      varias cámaras a la vez (RTSP/ONVIF o móviles), zonas y reglas por cámara
+      (restringida, aforo, merodeo, líneas de cruce), eventos con `camara_id`,
+      clips y timeline por cámara. Requiere el bloque 5 (multicámara), aún sin hacer.
+- [ ] **Integración de Telegram**: crear el bot, `.env` con `TELEGRAM_TOKEN` y
+      `TELEGRAM_CHAT_ID`, `telegram: true`, `POST /telegram/prueba`, comandos
+      `/armar /desarmar /estado /foto`, avisos con miniatura/clip, anti-spam;
+      y resolver WebM → MP4 H.264 si el móvil no reproduce el clip.
 
 ### B. Código pendiente (por prioridad)
 1. **Cámaras IP RTSP/ONVIF y multicámara** (bloque 5): lista de cámaras en config,
