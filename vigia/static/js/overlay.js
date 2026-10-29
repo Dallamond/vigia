@@ -72,6 +72,7 @@ export class Overlay {
           espera = REINTENTO_404;
         } else if (r.ok) {
           this.ultimo = await r.json();
+          window.dispatchEvent(new CustomEvent('vigia:vivo', { detail: this.ultimo }));
         } else {
           espera = 2000;
         }

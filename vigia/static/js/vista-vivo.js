@@ -9,7 +9,36 @@ const TAMANOS = {
   fit: '100%',
 };
 
+let vivoReciente = 0;
+
+function tarjetaPersona(p) {
+  const nombre = p.nombre || `Persona #${p.id}`;
+  const inicial = (p.nombre || String(p.id)).trim().charAt(0).toUpperCase();
+  const act = p.actividad && p.actividad !== 'desconocida' ? p.actividad : 'sin clasificar';
+  const conf = Number.isFinite(p.conf) ? `<span class="pc-conf" title="confianza de detección">${Math.round(p.conf * 100)}%</span>` : '';
+  const sub = [p.zona ? `zona ${esc(p.zona)}` : '', Number.isFinite(p.desde_seg) ? `desde hace ${esc(duracion(p.desde_seg))}` : '']
+    .filter(Boolean).join(' · ');
+  return `<div class="pcard ${p.nombre ? 'conocida' : ''}">
+    <span class="pc-av">${esc(inicial)}</span>
+    <span class="pc-main"><b>${esc(nombre)}</b><small>${sub || '&nbsp;'}</small></span>
+    <span class="pc-act">${esc(act)}</span>${conf}
+  </div>`;
+}
+
+function pintarPersonasVivo(d) {
+  const personas = (d && d.personas) || [];
+  vivoReciente = Date.now();
+  const html = personas.length ? personas.map(tarjetaPersona).join('') : '<div class="empty">sin personas</div>';
+  for (const id of ['acts', 'actsPersonas']) {
+    const el = $(id);
+    if (el) el.innerHTML = html;
+  }
+  const chip = $('pPersChip');
+  if (chip) chip.textContent = personas.length;
+}
+
 export function iniciarVivo(fuenteDatos) {
+  window.addEventListener('vigia:vivo', (e) => pintarPersonasVivo(e.detail));
   let guardado = null;
   try { guardado = localStorage.getItem('vigia.video'); } catch (e) { /* modo privado */ }
   aplicarTamano(guardado || 'fit');
@@ -69,6 +98,11 @@ function pintar(eventos, actividades, estado) {
   const cuenta = $('actCount');
   if (cuenta) cuenta.textContent = eventos.length;
 
+  if (Date.now() - vivoReciente < 3000) {
+    const cuenta2 = $('actCount');
+    if (cuenta2) cuenta2.textContent = eventos.length;
+    return;
+  }
   const claves = Object.keys(actividades || {});
   const html = claves.length
     ? claves.map((k) => `<div class="act-chip"><b>#${esc(k)}</b><span>${esc(actividades[k])}</span></div>`).join('')

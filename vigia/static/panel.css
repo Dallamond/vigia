@@ -458,6 +458,19 @@ select.field{padding-right:28px;background-repeat:no-repeat;background-position:
 .ult .thumb-l{width:120px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--line-2);background:#000;flex:none}
 .ult-t{margin:6px 0 2px}
 
+/* ---------- tarjeta de persona ---------- */
+.pcard{display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:2px 12px;align-items:center;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.pcard.conocida{border-color:color-mix(in srgb, var(--ok) 35%, var(--line))}
+.pc-av{grid-row:span 2;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:650;
+  background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line)}
+.pcard.conocida .pc-av{background:color-mix(in srgb, var(--ok) 14%, transparent);color:var(--ok);border-color:color-mix(in srgb, var(--ok) 40%, transparent)}
+.pc-main{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.pc-main b{font-size:.86rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-main small{font-size:.72rem;color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-act{grid-column:2 / span 2;grid-row:2;font-size:.78rem;color:var(--txt-2);font-weight:500;text-transform:capitalize;margin-top:4px}
+.pc-conf{font:500 .7rem var(--mono);color:var(--txt-3);align-self:start}
+
 /* ---------- registro del servidor ---------- */
 .logbox{max-height:340px;overflow:auto;font:.74rem/1.5 var(--mono);padding:6px 0;background:var(--surface-2)}
 .ll{display:grid;grid-template-columns:62px 62px 110px 1fr;gap:8px;padding:2px 14px;align-items:baseline}
