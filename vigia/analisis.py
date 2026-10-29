@@ -9,12 +9,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from typing import Callable
 
 import cv2
 import numpy as np
 
-from .actividades import EstabilizadorAct, clasificar as clasificar_actividad
+from . import vivo
+from .actividades import (DetectorCaidas, EstabilizadorAct,
+                          clasificar as clasificar_actividad)
 from .caras import CarasDetector
 from .pose import PoseDetector, dibujar_pose
 
@@ -112,10 +115,16 @@ def persona_de_pose(caja, personas) -> int | None:
 class ModuloActividades:
     """Segunda pasada con pose: clasifica que hace cada persona."""
 
-    def __init__(self, fabrica: Callable[[], object] = PoseDetector):
+    def __init__(self, fabrica: Callable[[], object] = PoseDetector,
+                 esqueleto: bool = True, caida_activa: bool = True,
+                 caida_inmovil_seg: float = 5.0):
         self._carga = CargaDiferida(fabrica, "pose")
         self._estabilizadores: dict[int, EstabilizadorAct] = {}
         self._ultima: dict[int, float] = {}
+        self._cajas: dict[int, deque] = {}
+        self.esqueleto = bool(esqueleto)
+        self._caidas = DetectorCaidas(activa=caida_activa,
+                                      inmovil_seg=caida_inmovil_seg)
         self.poses: list = []  # ultimas poses, para dibujarlas aparte
 
     def apagar(self) -> bool:
@@ -124,12 +133,30 @@ class ModuloActividades:
         hay = bool(self._estabilizadores)
         self._estabilizadores.clear()
         self._ultima.clear()
+        self._cajas.clear()
         self.poses = []
+        vivo.olvidar_personas(set())
         return hay
 
     def dibujar(self, frame) -> None:
         """Pinta el esqueleto de la ultima pasada (puede ir unos frames atrasado)."""
-        dibujar_pose(frame, self.poses)
+        dibujar_pose(frame, self.poses if self.esqueleto else [])
+
+    def _velocidad(self, pid: int, caja, ahora: float) -> float:
+        """Velocidad del centro en cuerpos/segundo (ventana ~1 s)."""
+        escala = max(caja[3] - caja[1], caja[2] - caja[0], 1.0)
+        cx, cy = _centro(caja)
+        hist = self._cajas.setdefault(pid, deque())
+        hist.append((ahora, cx, cy))
+        while len(hist) > 2 and ahora - hist[0][0] > 1.0:
+            hist.popleft()
+        if len(hist) < 2:
+            return 0.0
+        t0, x0, y0 = hist[0]
+        dt = ahora - t0
+        if dt <= 0.05:
+            return 0.0
+        return (((cx - x0) ** 2 + (cy - y0) ** 2) ** 0.5) / (dt * escala)
 
     def procesar(self, frame, mapa_ids: dict, extras: list,
                  ahora: float | None = None, dibujar: bool = True
@@ -140,28 +167,56 @@ class ModuloActividades:
         if pose is None:
             return None
         ahora = time.time() if ahora is None else ahora
-        poses = pose.detectar(frame)
+        if hasattr(pose, "poner_tiempo"):
+            pose.poner_tiempo(ahora)
+        try:
+            poses = pose.detectar(frame, mapa_ids)
+        except TypeError:  # detectores falsos de tests / versiones antiguas
+            poses = pose.detectar(frame)
         personas = list(mapa_ids.items())
         anuncios: list[tuple[int, str]] = []
         vistos: set[int] = set()
+        alto, ancho = frame.shape[:2]
+        vivo.publicar_frame(ancho, alto, [
+            {"clase": d.clase, "caja": list(d.caja), "conf": round(d.conf, 3)}
+            for d in extras])
         for p in poses:
-            pid = persona_de_pose(p.caja, personas)
+            pid = getattr(p, "track_id", None)
+            if pid is None or pid < 0:
+                pid = persona_de_pose(p.caja, personas)
             if pid is None:
                 continue
+            velocidad = self._velocidad(pid, p.caja, ahora)
             est = self._estabilizadores.setdefault(pid, EstabilizadorAct())
             self._ultima[pid] = ahora
-            anuncio = est.tick(clasificar_actividad(p, extras), ahora)
+            cruda = clasificar_actividad(p, extras, {
+                "velocidad_rel": velocidad, "distinguir_tumbado": True})
+            anuncio = est.tick(cruda, ahora)
             if anuncio:
                 anuncios.append((pid, anuncio))
+            if self._caidas.actualizar(pid, est.actual, p.caja, ahora):
+                anuncios.append((pid, "persona_caida"))
+            vivo.publicar_persona(
+                pid, p.caja, [(x, y, c) for (x, y), c in
+                              zip(p.kpts, p.conf)],
+                actividad=est.actual,
+                desde=getattr(est, "desde", ahora),
+                actividad_cruda=cruda, conf=getattr(p, "score", 0.0))
             vistos.add(pid)
         for pid in list(self._estabilizadores):
             if (pid not in vistos
                     and ahora - self._ultima.get(pid, 0) > _GRACIA_ACTIVIDAD_SEG):
                 del self._estabilizadores[pid]
                 self._ultima.pop(pid, None)
-        self.poses = poses
+                self._cajas.pop(pid, None)
+        if hasattr(pose, "olvidar"):
+            pose.olvidar(ahora)
+        vivo.olvidar_personas(vistos)
+        self.poses = [p for p in poses
+                      if getattr(p, "track_id", -1) is not None
+                      and p.track_id >= 0]
         if dibujar:
-            dibujar_pose(frame, poses)
+            self.dibujar(frame)
         return ({pid: est.actual for pid, est in self._estabilizadores.items()},
                 anuncios)
 
@@ -228,6 +283,7 @@ class ModuloCaras:
                   ahora: float) -> list[tuple[str, str, int]]:
         eventos: list[tuple[str, str, int]] = []
         mejor = None
+        caras_pub: list[dict] = []
         for cara in detector.detectar(frame):
             if mejor is None or _area(cara["caja"]) > _area(mejor["caja"]):
                 if cara["conf"] >= self.CONF_MINIMA:
@@ -235,26 +291,29 @@ class ModuloCaras:
             centro = _centro(cara["caja"])
             pid = next((p for p, caja in mapa_ids.items()
                         if _dentro(centro, caja)), None)
-            if pid is None:
-                continue
-            nombre, sim = detector.identificar(cara["emb"])
-            self.identidades[pid] = (nombre, sim)
-            self._visto[pid] = ahora
-            if nombre is not None:
-                if (self._reconocidos.get(pid) != nombre
-                        and ahora - self._ultimo_nombre.get(nombre, 0.0)
-                        >= self.RECONOCIDA_MIN_SEG):
-                    self._reconocidos[pid] = nombre
-                    self._ultimo_nombre[nombre] = ahora
-                    eventos.append((
-                        "persona_reconocida",
-                        f"id {pid} = {nombre} ({sim:.0%})", pid))
-            elif (cara["conf"] >= self.CONF_MINIMA
-                  and ahora - self._aviso_desconocida.get(pid, 0.0)
-                  >= self.DESCONOCIDA_SEG):
-                self._aviso_desconocida[pid] = ahora
-                eventos.append(("cara_desconocida",
-                                f"id {pid} sin identificar", pid))
+            nombre = None
+            if pid is not None:
+                nombre, sim = detector.identificar(cara["emb"])
+                self.identidades[pid] = (nombre, sim)
+                self._visto[pid] = ahora
+                vivo.publicar_identidad(pid, nombre)
+                if nombre is not None:
+                    if (self._reconocidos.get(pid) != nombre
+                            and ahora - self._ultimo_nombre.get(nombre, 0.0)
+                            >= self.RECONOCIDA_MIN_SEG):
+                        self._reconocidos[pid] = nombre
+                        self._ultimo_nombre[nombre] = ahora
+                        eventos.append((
+                            "persona_reconocida",
+                            f"id {pid} = {nombre} ({sim:.0%})", pid))
+                elif (cara["conf"] >= self.CONF_MINIMA
+                      and ahora - self._aviso_desconocida.get(pid, 0.0)
+                      >= self.DESCONOCIDA_SEG):
+                    self._aviso_desconocida[pid] = ahora
+                    eventos.append(("cara_desconocida",
+                                    f"id {pid} sin identificar", pid))
+            caras_pub.append({"caja": cara["caja"], "nombre": nombre})
+        vivo.publicar_caras(caras_pub)
         if mejor is not None and self._al_ver_cara is not None:
             self._al_ver_cara(self._ficha(frame, mejor, ahora))
         return eventos
@@ -376,8 +435,13 @@ class AnalisisAsincrono:
                     if res is not None:
                         actuales, anuncios = res
                         self._publicar(actuales)
-                        nuevos += [("actividad", f"id {pid} {texto}", pid)
-                                   for pid, texto in anuncios]
+                        for pid, texto in anuncios:
+                            if texto == "persona_caida":
+                                nuevos.append(("persona_caida", f"id {pid}",
+                                               pid))
+                            else:
+                                nuevos.append(("actividad",
+                                               f"id {pid} {texto}", pid))
                 elif self.actividades.apagar():
                     self._publicar({})
                 if car:

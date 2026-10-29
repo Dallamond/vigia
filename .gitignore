@@ -16,3 +16,4 @@ logs/
 clips/
 modelos/
 *.onnx
+eval/salida/

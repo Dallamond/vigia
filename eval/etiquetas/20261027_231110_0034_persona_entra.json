@@ -1,0 +1,11 @@
+{
+ "video": "clips/20261027_231110_0034_persona_entra.webm",
+ "nota": "Sentado al escritorio; en el ultimo tercio se levanta y sale por la derecha.",
+ "tramos": [
+  {"desde": 0.0, "hasta": 4.4, "actividad": "sentado"},
+  {"desde": 4.5, "hasta": 7.0, "actividad": "de pie"}
+ ],
+ "eventos": [
+  {"t": 6.4, "evento": "persona_salio"}
+ ]
+}

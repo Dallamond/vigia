@@ -47,12 +47,14 @@ _COLUMNAS_NUEVAS = {
     "camara_id": "TEXT DEFAULT '0'",
     # zona implicada (para filtrar sin analizar el texto de `detalle`)
     "zona": "TEXT",
+    # duracion de la estancia (solo `zona_sale`), en segundos
+    "duracion_seg": "REAL",
 }
 
-_VERSION_ESQUEMA = 3
+_VERSION_ESQUEMA = 4
 _FORMATO = "%Y-%m-%d %H:%M:%S"
 _COLS = ("id", "marca_sistema", "marca_pantalla", "tipo", "id_tracking",
-         "detalle", "miniatura", "clip", "camara_id", "zona")
+         "detalle", "miniatura", "clip", "camara_id", "zona", "duracion_seg")
 
 
 def _fecha_desde(valor: str) -> str:
@@ -177,20 +179,26 @@ class Almacen:
                 clip: str | None = None,
                 cuando: str | None = None,
                 zona: str | None = None,
-                camara_id: str | int | None = None) -> int:
+                camara_id: str | int | None = None,
+                duracion_seg: float | None = None) -> int:
         """Inserta un evento y devuelve su id (para enlazarle media)."""
         momento = datetime.now() if cuando is None else datetime.strptime(
             cuando, _FORMATO)
         ahora = momento.strftime(_FORMATO)
         pantalla = momento.strftime("%H:%M:%S")
         camara = "0" if camara_id is None else str(camara_id)
+        if duracion_seg is not None:
+            try:
+                duracion_seg = float(duracion_seg)
+            except (TypeError, ValueError):
+                duracion_seg = None
         with self._lock:
             cur = self.con.execute(
                 "INSERT INTO eventos (marca_sistema, marca_pantalla, tipo, "
-                "id_tracking, detalle, miniatura, clip, camara_id, zona) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "id_tracking, detalle, miniatura, clip, camara_id, zona, "
+                "duracion_seg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (ahora, pantalla, tipo, id_tracking, detalle, miniatura, clip,
-                 camara, zona))
+                 camara, zona, duracion_seg))
             self.con.commit()
             return int(cur.lastrowid or 0)
 

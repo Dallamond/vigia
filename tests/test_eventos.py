@@ -125,7 +125,8 @@ def test_id_perdido_mas_que_la_gracia_reinicia(motor):
     adelantar(11)
     motor.procesar([], {})
     adelantar(20)
-    assert motor.procesar([], {3: (0, 0, 100, 100)}) == []
+    evs = motor.procesar([], {3: (0, 0, 100, 100)})
+    assert not [e for e in evs if e.tipo == "permanencia"]
 
 
 def _motor_con_franja(tmp_path, hora):
@@ -165,10 +166,12 @@ def test_fuera_de_franja_reinicia_los_objetos(tmp_path):
         m.procesar(P(), {}, objetos_extra=L(True))
         hora["v"] = "12:00"
         adelantar(10)
-        assert m.procesar(P(), {}, objetos_extra=L(False)) == []
+        evs = m.procesar(P(), {}, objetos_extra=L(False))
+        assert not [e for e in evs if e.tipo == "objeto_desaparece"]
         hora["v"] = "03:00"
         adelantar(20)
         # el portatil ya no estaba antes de reentrar: no hay desaparicion
-        assert m.procesar(P(), {}, objetos_extra=L(False)) == []
+        evs = m.procesar(P(), {}, objetos_extra=L(False))
+        assert not [e for e in evs if e.tipo == "objeto_desaparece"]
     finally:
         a.cerrar()

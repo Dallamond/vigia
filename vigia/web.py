@@ -48,6 +48,7 @@ from .detector import Deteccion, Detector
 from .dibujo import dibujar, frame_aviso
 from .eventos import MotorEventos
 from .logs import configurar_logging, leer_log
+from .lineas import normalizar_lineas
 from .mantener import mantener
 from .notificaciones import notificar
 from .seguridad import (CABECERAS_SEGURIDAD, RUTAS_PUBLICAS,
@@ -201,7 +202,8 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
                    id_tracking: int | None = None,
                    evento_id: int | None = None,
                    zona: str | None = None,
-                   camara_id: str | int | None = None) -> int | None:
+                   camara_id: str | int | None = None,
+                   duracion_seg: float | None = None) -> int | None:
     """Unico punto de salida de un evento: persiste, guarda media y publica.
 
     - si el evento ya existe (motor), se reutiliza su `evento_id`
@@ -214,7 +216,8 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
     if evento_id is None:
         evento_id = almacen.guardar(tipo, id_tracking=id_tracking,
                                     detalle=detalle, zona=zona,
-                                    camara_id=camara)
+                                    camara_id=camara,
+                                    duracion_seg=duracion_seg)
     ahora = datetime.now()
     miniatura = clip = None
     clip_path = None
@@ -257,6 +260,7 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
         "id_tracking": id_tracking,
         "zona": zona,
         "camara_id": camara,
+        "duracion_seg": duracion_seg,
         "miniatura": miniatura,
         "clip": clip,
     })
@@ -363,6 +367,10 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
     fps_hist: deque[float] = deque(maxlen=30)
     fps_ultimo = 0.0
     ultimo_t = 0.0
+    # identidad de la camara para media y eventos multicamara (P3)
+    camara_id = str(config.get("camara_id", "0") or "0")
+    # evita duplicar entra/salio si el rastreador repite el mismo aviso
+    anunciados_dentro: set[int] = set()
     # la primera pasada de mantenimiento, tras el arranque
     proximo_mantenimiento = time.monotonic() + 60 * int(
         config.get("mantener_cada_min", 60) or 60)
@@ -370,7 +378,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
     def anotar(frame, tipo, detalle="", id_tracking=None):
         _anotar_evento(estado, almacen, clips, config, frame, tipo, detalle,
-                       id_tracking=id_tracking)
+                       id_tracking=id_tracking, camara_id=camara_id)
 
     while not (parar and parar.is_set()):
         t0 = time.perf_counter()
@@ -407,8 +415,19 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                 fuera = motor.fuera_de_franja()
                 for tipo, pid in rastreador.actualizar(ids_persona):
                     # coherencia: entra/sale tambien respeta las franjas
-                    if not fuera:
-                        anotar(frame, tipo, f"id {pid}", pid)
+                    if fuera:
+                        continue
+                    # dedupe defensivo: el rastreador no debe anunciar dos
+                    # veces la misma entrada ni una salida sin entrada
+                    if tipo == "persona_entra":
+                        if pid in anunciados_dentro:
+                            continue
+                        anunciados_dentro.add(pid)
+                    elif tipo == "persona_salio":
+                        if pid not in anunciados_dentro:
+                            continue
+                        anunciados_dentro.discard(pid)
+                    anotar(frame, tipo, f"id {pid}", pid)
                 mapa_ids = {ids_idx[i]: d.caja for i, d in enumerate(dets)
                             if d.es_persona and i in ids_idx}
                 extras = [d for d in dets if not d.es_persona]
@@ -418,7 +437,9 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
                                          identidades=identidades):
                     _anotar_evento(estado, almacen, clips, config, frame,
                                    ev.tipo, ev.detalle, evento_id=ev.id,
-                                   id_tracking=ev.id_tracking)
+                                   id_tracking=ev.id_tracking, zona=ev.zona,
+                                   camara_id=ev.camara_id or camara_id,
+                                   duracion_seg=ev.duracion_seg)
 
                 # los interruptores del panel se leen en cada frame: funcionan
                 # sin reiniciar
@@ -517,6 +538,7 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
 
 app = FastAPI(title="Vigia")
+app.include_router(__import__("vigia.vivo", fromlist=["router"]).router)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -1132,11 +1154,33 @@ async def zonas_guardar(datos: dict) -> dict:
     """
     try:
         zonas = normalizar_zonas((datos or {}).get("zonas", {}), estricto=True,
-                                 log_errores=False)
+                                 log_errores=False, ancho=estado.ancho,
+                                 alto=estado.alto)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return await config_guardar(
         {"zonas": {n: z.a_dict() for n, z in zonas.items()}})
+
+
+@app.get("/lineas")
+def lineas_json(response: Response) -> dict:
+    """Lineas de cruce (tripwires) actuales y resolucion vigente."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"lineas": _motor_compartido.lineas_dict(),
+            "ancho": estado.ancho, "alto": estado.alto}
+
+
+@app.put("/lineas")
+async def lineas_guardar(datos: dict) -> dict:
+    """Lineas desde el editor visual: validacion estricta y caliente."""
+    try:
+        lineas = normalizar_lineas((datos or {}).get("lineas", {}),
+                                   estricto=True, ancho=estado.ancho,
+                                   alto=estado.alto, log_errores=False)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await config_guardar(
+        {"lineas": {n: l.a_dict() for n, l in lineas.items()}})
 
 
 @app.get("/actividades")
@@ -1267,7 +1311,8 @@ _RANGOS = {
 }
 _AJUSTES_BOOL = ("guardar_clips", "notificar", "actividades", "miniaturas",
                  "caras", "telegram", "armado_auto")
-_AJUSTES_LISTA = ("vigilar_desaparicion", "zonas", "franjas", "armado_franjas")
+_AJUSTES_LISTA = ("vigilar_desaparicion", "zonas", "lineas", "franjas",
+                  "armado_franjas")
 # ancho/alto solo se leen al crear la camara: hace falta reiniciar
 _REQUIEREN_REINICIO = ("ancho", "alto")
 
@@ -1291,6 +1336,7 @@ def config_json(response: Response) -> dict:
     response.headers["Cache-Control"] = "no-store"
     c = dict(_config)
     c["zonas"] = _motor_compartido.zonas_dict()
+    c["lineas"] = _motor_compartido.lineas_dict()
     c["franjas"] = [{"desde": d, "hasta": h} for d, h in _motor_compartido.franjas]
     return c
 
@@ -1371,7 +1417,16 @@ async def config_guardar(datos: dict) -> dict:
         if zonas is not None:
             try:
                 datos["zonas"] = normalizar_zonas(
-                    zonas, estricto=True, log_errores=False)
+                    zonas, estricto=True, log_errores=False,
+                    ancho=estado.ancho, alto=estado.alto)
+            except ValueError as e:
+                raise ValueError(str(e))
+        lineas = datos.get("lineas")
+        if lineas is not None:
+            try:
+                datos["lineas"] = normalizar_lineas(
+                    lineas, estricto=True, ancho=estado.ancho,
+                    alto=estado.alto, log_errores=False)
             except ValueError as e:
                 raise ValueError(str(e))
         franjas = datos.get("franjas")
@@ -1417,6 +1472,9 @@ async def config_guardar(datos: dict) -> dict:
         _motor_compartido.vigilar = list(datos["vigilar_desaparicion"])
     if "zonas" in datos:
         _motor_compartido.zonas = dict(datos["zonas"])
+    if "lineas" in datos:
+        _motor_compartido.gestor_lineas.actualizar(dict(datos["lineas"]))
+        _motor_compartido.lineas = dict(datos["lineas"])
     if "franjas" in datos:
         _motor_compartido.franjas = [
             (f["desde"], f["hasta"]) for f in datos["franjas"]]
@@ -1447,6 +1505,9 @@ async def config_guardar(datos: dict) -> dict:
     if "zonas" in guardables:
         guardables["zonas"] = {n: z.a_dict()
                                for n, z in guardables["zonas"].items()}
+    if "lineas" in guardables:
+        guardables["lineas"] = {n: l.a_dict()
+                                for n, l in guardables["lineas"].items()}
     cambios = {k: v for k, v in guardables.items()
                if k in _AJUSTES_NUM + _AJUSTES_BOOL + _AJUSTES_LISTA
                or k == "telegram_prioridades"}

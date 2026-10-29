@@ -1,0 +1,8 @@
+{
+ "video": "clips/20261028_092111_0018_permanencia.webm",
+ "nota": "Persona sentada de medio cuerpo al escritorio toda la grabacion.",
+ "tramos": [
+  {"desde": 0.0, "hasta": 7.0, "actividad": "sentado"}
+ ],
+ "eventos": []
+}

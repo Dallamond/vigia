@@ -1,0 +1,11 @@
+{
+ "video": "clips/20261027_224125_0005_persona_entra.webm",
+ "nota": "Entra por la derecha, se acerca y se sienta en la silla. Etiquetado mirando frames 0/17/35/52/69.",
+ "tramos": [
+  {"desde": 0.0, "hasta": 2.4, "actividad": "de pie"},
+  {"desde": 2.5, "hasta": 7.0, "actividad": "sentado"}
+ ],
+ "eventos": [
+  {"t": 0.3, "evento": "persona_entra"}
+ ]
+}

@@ -13,6 +13,7 @@ from pathlib import Path
 from yaml import safe_load
 
 from .zonas import PRIORIDADES, normalizar_zonas
+from .lineas import normalizar_lineas
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ DEFAULTS = {
     "timeout_persona_seg": 10,
     "vigilar_desaparicion": [],
     "zonas": {},
+    "lineas": {},
     "franjas": [],
     "guardar_clips": True,
     "notificar": True,
@@ -72,14 +74,38 @@ DEFAULTS = {
     # actividades requiere el modelo de pose (descarga extra en primer uso):
     # off por defecto para tests y arranque ligero; se activa en config.yaml
     "actividades": False,
-    # reconocimiento de caras (fase 7): descarga modelos ONNX la primera vez
+    # --- pose / esqueleto (ronda 3) ---
+    # n/s/m o ruta a un .pt; el modelo se descarga solo si falta
+    "pose_modelo": "n",
+    "pose_imgsz": 640,
+    # keypoints por debajo de esta confianza se descartan (se mantiene el
+    # ultimo valor valido un segundo)
+    "conf_kpt": 0.3,
+    "suavizar_kpts": True,
+    "dibujar_esqueleto": True,
+    # --- reconocimiento de caras (fase 7): descarga modelos ONNX la primera vez
     "caras": False,
     # --- entradas/salidas de personas ---
     # segundos que un ID debe verse seguido antes de anunciar `persona_entra`
     "confirmar_entrada_seg": 1.0,
+    # aparicion lejos del borde: mas tiempo (sombras/reflejos en el centro)
+    "confirmar_interior_seg": 2.5,
+    # confianza media y alto minimo (fraccion del alto del frame) para entrar
+    "entrada_conf_min": 0.35,
+    "entrada_alto_min": 0.08,
+    # salida adaptativa: borde (se fue) corto; centro (oclusion) largo
+    "timeout_borde_seg": 2.0,
+    "timeout_centro_seg": 12.0,
     # un ID nuevo que aparece donde acaba de desaparecer otro (en estos
     # segundos) se toma por la misma persona: evita entradas falsas
     "reasociar_seg": 8,
+    # re-identificacion ligera por histograma HSV del torso
+    "reid": True,
+    "reid_sim_min": 0.55,
+    # caidas: de pie -> tumbado + inmovilidad
+    "caida_activa": True,
+    "caida_inmovil_seg": 5,
+    "vivo_cache_seg": 0.2,
     # --- reglas por zona (bloque 4) ---
     # umbral para conocidos: 0 = nunca disparan permanencia
     "permanencia_conocidos_seg": 0,
@@ -93,6 +119,10 @@ DEFAULTS = {
     "inmovil_px": 20,
     # maximo de personas global (0 = sin limite); cada zona puede tener el suyo
     "max_personas": 0,
+    # gracia al salir de una zona (rebotes de borde) y anti-rebote de los
+    # eventos de zona (`zona_entra`/`zona_sale`)
+    "timeout_zona_seg": 1.5,
+    "cooldown_zona_seg": 2,
     # --- Telegram (bloque 2). Los secretos van en .env, no aqui ---
     "telegram": False,
     "telegram_prioridades": _PRIORIDADES_DEFECTO,
@@ -209,6 +239,16 @@ def _entero_no_negativo(valor, defecto, clave: str, maximo: int = 86400) -> int:
     return min(numero, maximo)
 
 
+def _fraccion(valor, defecto, clave: str, maximo: float = 1.0) -> float:
+    """Numero en [0, maximo]; valores raros caen al defecto."""
+    numero = _numero(valor, defecto, clave)
+    try:
+        numero = float(numero)
+    except (TypeError, ValueError):
+        return float(defecto)
+    return max(0.0, min(numero, maximo))
+
+
 def _host(valor) -> str:
     texto = str(valor or "").strip()
     if not texto:
@@ -278,6 +318,8 @@ def cargar_config(ruta: str | Path | None = None) -> dict:
     cfg["vigilar_desaparicion"] = _lista_texto(
         cfg["vigilar_desaparicion"], "vigilar_desaparicion")
     cfg["zonas"] = _zonas(cfg["zonas"])
+    cfg["lineas"] = normalizar_lineas(cfg.get("lineas") or {},
+                                      log_errores=True)
     cfg["franjas"] = _franjas(cfg["franjas"])
     cfg["guardar_clips"] = _booleano(
         cfg["guardar_clips"], DEFAULTS["guardar_clips"], "guardar_clips")
@@ -306,6 +348,9 @@ def cargar_config(ruta: str | Path | None = None) -> dict:
         1, _entero_no_negativo(cfg.get("merodeo_entradas"),
                                DEFAULTS["merodeo_entradas"],
                                "merodeo_entradas", maximo=100))
+    for clave in ("timeout_zona_seg", "cooldown_zona_seg"):
+        cfg[clave] = _fraccion(cfg.get(clave), DEFAULTS[clave], clave,
+                               maximo=86400.0)
     cfg["telegram"] = _booleano(
         cfg.get("telegram"), DEFAULTS["telegram"], "telegram")
     cfg["telegram_prioridades"] = _prioridades(
@@ -313,4 +358,21 @@ def cargar_config(ruta: str | Path | None = None) -> dict:
     cfg["armado_auto"] = _booleano(
         cfg.get("armado_auto"), DEFAULTS["armado_auto"], "armado_auto")
     cfg["armado_franjas"] = _franjas(cfg.get("armado_franjas") or [])
+
+    # --- percepcion (ronda 3) -----------------------------------------
+    cfg["pose_modelo"] = str(cfg.get("pose_modelo") or "n").strip() or "n"
+    cfg["pose_imgsz"] = _entero(cfg.get("pose_imgsz"),
+                                DEFAULTS["pose_imgsz"], "pose_imgsz",
+                                160, 1920)
+    for clave in ("conf_kpt", "entrada_conf_min", "reid_sim_min",
+                  "entrada_alto_min"):
+        cfg[clave] = _fraccion(cfg.get(clave), DEFAULTS[clave], clave)
+    for clave in ("confirmar_interior_seg", "timeout_borde_seg",
+                  "timeout_centro_seg", "reasociar_seg",
+                  "caida_inmovil_seg", "vivo_cache_seg"):
+        cfg[clave] = _fraccion(cfg.get(clave), DEFAULTS[clave], clave,
+                               maximo=86400.0)
+    for clave in ("suavizar_kpts", "dibujar_esqueleto", "reid",
+                  "caida_activa"):
+        cfg[clave] = _booleano(cfg.get(clave), DEFAULTS[clave], clave)
     return cfg

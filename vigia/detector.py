@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Sequence
 
 from ultralytics import YOLO
+
+from .apariencia import huella_torso
 
 log = logging.getLogger(__name__)
 
@@ -17,6 +19,9 @@ class Deteccion:
     clase: str
     conf: float
     caja: _CAJA
+    # histograma HSV del torso (solo personas, si `con_huella`); no entra en
+    # la comparacion/representacion para no romper usos antiguos
+    huella: object = field(default=None, repr=False, compare=False)
 
     @property
     def es_persona(self) -> bool:
@@ -27,9 +32,13 @@ class Detector:
     """Envuelve YOLO11n y devuelve Deteccion(es) limpias."""
 
     def __init__(self, modelo: str = "yolo11n.pt", conf: float = 0.4,
-                 clases: Sequence[str] | None = None):
+                 clases: Sequence[str] | None = None,
+                 con_huella: bool = True, imgsz: int = 640):
         self.model = YOLO(modelo)
         self.conf = conf
+        self.imgsz = int(imgsz)
+        # la huella del torso es casi gratis y permite reasociar por ropa
+        self.con_huella = bool(con_huella)
         self._nombres: dict[int, str] = self.model.names
         self._nombres_a_id = {v: k for k, v in self._nombres.items()}
         self.clases: list[int] | None = None
@@ -52,14 +61,19 @@ class Detector:
             ids.append(self._nombres_a_id[c])
         self.clases = ids or None
 
-    def detectar(self, frame, conf_min: float | None = None) -> list[Deteccion]:
-        """Ejecuta inferencia sobre un frame BGR y devuelve detecciones."""
+    def _args(self, conf_min: float | None, track: bool) -> dict:
         conf = conf_min if conf_min is not None else self.conf
-        args = {"conf": conf, "verbose": False}
+        args = {"conf": conf, "verbose": False, "imgsz": self.imgsz}
         if self.clases:
             args["classes"] = self.clases
-        resultados = self.model.predict(frame, **args)
-        return self._a_detecciones(resultados)
+        if track:
+            args["persist"] = True
+        return args
+
+    def detectar(self, frame, conf_min: float | None = None) -> list[Deteccion]:
+        """Ejecuta inferencia sobre un frame BGR y devuelve detecciones."""
+        resultados = self.model.predict(frame, **self._args(conf_min, False))
+        return self._a_detecciones(resultados, frame)
 
     def detectar_track(self, frame, conf_min: float | None = None
                        ) -> tuple[list[Deteccion], dict[int, int]]:
@@ -67,11 +81,13 @@ class Detector:
 
         Solo las cajas que completan el tracking llevan id asociado.
         """
-        conf = conf_min if conf_min is not None else self.conf
-        args = {"conf": conf, "verbose": False, "persist": True}
-        if self.clases:
-            args["classes"] = self.clases
-        resultados = self.model.track(frame, **args)
+        resultados = self.model.track(frame, **self._args(conf_min, True))
+        try:
+            from .tracking import registrar_dimensiones
+            alto, ancho = frame.shape[:2]
+            registrar_dimensiones(ancho, alto)
+        except Exception:
+            pass
         salida: list[Deteccion] = []
         ids_por_indice: dict[int, int] = {}
         for r in resultados:
@@ -85,13 +101,16 @@ class Detector:
                     r.boxes.cls.cpu().numpy())):
                 if ids is not None:
                     ids_por_indice[len(salida)] = int(ids[idx])
+                clase = self._nombres[int(id_clase)]
+                caja_t = tuple(int(v) for v in caja)
+                huella = (huella_torso(frame, caja_t)
+                          if self.con_huella and clase == "person" else None)
                 salida.append(Deteccion(
-                    clase=self._nombres[int(id_clase)],
-                    conf=float(conf_v),
-                    caja=tuple(int(v) for v in caja)))
+                    clase=clase, conf=float(conf_v), caja=caja_t,
+                    huella=huella))
         return salida, ids_por_indice
 
-    def _a_detecciones(self, resultados) -> list[Deteccion]:
+    def _a_detecciones(self, resultados, frame=None) -> list[Deteccion]:
         salida: list[Deteccion] = []
         for r in resultados:
             if r.boxes is None:
@@ -100,8 +119,12 @@ class Detector:
                     r.boxes.xyxy.cpu().numpy(),
                     r.boxes.conf.cpu().numpy(),
                     r.boxes.cls.cpu().numpy()):
+                clase = self._nombres[int(id_clase)]
+                caja_t = tuple(int(v) for v in caja)
+                huella = (huella_torso(frame, caja_t)
+                          if self.con_huella and frame is not None
+                          and clase == "person" else None)
                 salida.append(Deteccion(
-                    clase=self._nombres[int(id_clase)],
-                    conf=float(conf_v),
-                    caja=tuple(int(v) for v in caja)))
+                    clase=clase, conf=float(conf_v), caja=caja_t,
+                    huella=huella))
         return salida

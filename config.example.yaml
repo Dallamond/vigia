@@ -102,9 +102,37 @@ notificar: true
 # Segunda pasada de pose para clasificar actividades (descarga el modelo
 # yolo11n-pose.pt la primera vez; baja los FPS).
 actividades: false
+# Modelo de pose: n/s/m (se descarga solo) o ruta a un .pt. `pose_imgsz`
+# controla el coste: 640 es el equilibrio en la RTX 3060 (~15+ fps).
+pose_modelo: n
+pose_imgsz: 640
+# Keypoints por debajo de esta confianza se descartan y se mantiene el
+# ultimo valor valido ~1 s (filtro One-Euro adaptativo).
+conf_kpt: 0.3
+suavizar_kpts: true
+# Dibujar el esqueleto por colores sobre el video (detras de las cajas).
+dibujar_esqueleto: true
 # Caras: YuNet (deteccion) + SFace (identidad), modelos onnx descargados
 # automaticamente (~40MB) a `modelos/`. Conocidos en la tabla `rostros`.
 caras: false
+
+# --- percepcion: entradas/salidas y re-ID (ronda 3) -----------------------
+# Aparicion lejos del borde: exige mas tiempo (sombras/reflejos en el centro).
+confirmar_interior_seg: 2.5
+# Confianza media y alto minimo (fraccion del frame) para confirmar entrada.
+entrada_conf_min: 0.35
+entrada_alto_min: 0.08
+# Timeout adaptativo de salida: borde (se fue) y centro (probable oclusion).
+timeout_borde_seg: 2.0
+timeout_centro_seg: 12.0
+# Re-identificacion ligera por histograma HSV del torso al reasociar IDs.
+reid: true
+reid_sim_min: 0.55
+# Caidas: de pie/caminando -> tumbado + inmovilidad.
+caida_activa: true
+caida_inmovil_seg: 5
+# Cache de /vivo en segundos (la GUI lo consulta a ~6 Hz).
+vivo_cache_seg: 0.2
 
 # --- Telegram (bloque 2) ---------------------------------------------------
 # Los secretos NO van aqui: TELEGRAM_TOKEN y TELEGRAM_CHAT_ID en `.env`

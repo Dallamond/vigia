@@ -36,16 +36,25 @@ def _numero(valor, defecto=None):
         return defecto
 
 
-def _caja(valor) -> tuple[int, int, int, int] | None:
+def _caja(valor, ancho: int | None = None,
+          alto: int | None = None) -> tuple[int, int, int, int] | None:
     if not isinstance(valor, (list, tuple)) or len(valor) != 4:
         return None
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
                for v in valor):
         return None
-    return tuple(int(v) for v in valor)
+    caja = tuple(int(v) for v in valor)
+    if any(v < 0 for v in caja):
+        return None
+    if ancho is not None and (caja[0] > ancho or caja[2] > ancho):
+        return None
+    if alto is not None and (caja[1] > alto or caja[3] > alto):
+        return None
+    return caja
 
 
-def _poligono(valor) -> tuple[tuple[int, int], ...] | None:
+def _poligono(valor, ancho: int | None = None,
+              alto: int | None = None) -> tuple[tuple[int, int], ...] | None:
     if not isinstance(valor, (list, tuple)) or len(valor) < 3:
         return None
     puntos = []
@@ -54,7 +63,14 @@ def _poligono(valor) -> tuple[tuple[int, int], ...] | None:
                 or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
                            for v in punto)):
             return None
-        puntos.append((int(punto[0]), int(punto[1])))
+        x, y = int(punto[0]), int(punto[1])
+        if x < 0 or y < 0:
+            return None
+        if ancho is not None and x > ancho:
+            return None
+        if alto is not None and y > alto:
+            return None
+        puntos.append((x, y))
     return tuple(puntos)
 
 
@@ -181,20 +197,26 @@ def _bool(valor, defecto: bool, clave: str) -> bool:
     raise ValueError(f"{clave} debe ser booleano")
 
 
-def normalizar_zona(nombre: str, valor) -> Zona:
-    """Convierte el formato antiguo o el nuevo en una `Zona` (estricto)."""
+def normalizar_zona(nombre: str, valor, ancho: int | None = None,
+                    alto: int | None = None) -> Zona:
+    """Convierte el formato antiguo o el nuevo en una `Zona` (estricto).
+
+    Si se pasan `ancho`/`alto` valida que las coordenadas caigan dentro de la
+    resolucion del video (lo usa `PUT /zonas`; la carga de config es laxa).
+    """
     nombre = str(nombre)
     if isinstance(valor, (list, tuple)):
-        caja = _caja(valor)
+        caja = _caja(valor, ancho, alto)
         if caja is None:
-            raise ValueError(f"zona '{nombre}' no es 4 numeros")
+            raise ValueError(f"zona '{nombre}' no es 4 numeros validos")
         return Zona(nombre=nombre, caja=caja)
     if not isinstance(valor, dict):
         raise ValueError(f"zona '{nombre}' debe ser una caja o un objeto")
-    poligono = _poligono(valor.get("poligono"))
-    caja = _caja(valor.get("caja"))
+    poligono = _poligono(valor.get("poligono"), ancho, alto)
+    caja = _caja(valor.get("caja"), ancho, alto)
     if poligono is None and caja is None:
-        raise ValueError(f"zona '{nombre}' necesita 'caja' o 'poligono'")
+        raise ValueError(f"zona '{nombre}' necesita 'caja' o 'poligono' "
+                         f"valido dentro del video")
     if poligono is not None and caja is not None:
         raise ValueError(f"zona '{nombre}': usa 'caja' o 'poligono', no ambos")
     permanencia = valor.get("permanencia_seg")
@@ -236,7 +258,9 @@ def normalizar_zona(nombre: str, valor) -> Zona:
 
 
 def normalizar_zonas(valor, estricto: bool = False,
-                     log_errores: bool = True) -> dict[str, Zona]:
+                     log_errores: bool = True,
+                     ancho: int | None = None,
+                     alto: int | None = None) -> dict[str, Zona]:
     """Dict nombre -> Zona. En modo no estricto descarta las mal formadas."""
     if not isinstance(valor, dict):
         if estricto:
@@ -248,7 +272,8 @@ def normalizar_zonas(valor, estricto: bool = False,
     zonas: dict[str, Zona] = {}
     for nombre, datos in valor.items():
         try:
-            zonas[str(nombre)] = normalizar_zona(nombre, datos)
+            zonas[str(nombre)] = normalizar_zona(
+                nombre, datos, ancho=ancho, alto=alto)
         except ValueError as e:
             if estricto:
                 raise

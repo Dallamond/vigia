@@ -1,0 +1,8 @@
+{
+ "video": "clips/20261028_091249_0008_persona_entra.webm",
+ "nota": "Persona sentada al escritorio; al final asoma otra persona por la derecha (se ignora para actividad).",
+ "tramos": [
+  {"desde": 0.0, "hasta": 7.0, "actividad": "sentado"}
+ ],
+ "eventos": []
+}
