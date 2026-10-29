@@ -1,6 +1,14 @@
-/* Vista «Clips»: listado de vídeos guardados con reproductor. */
-import { $, bytes, esc } from './nucleo.js';
+/* Vista «Clips»: galería de vídeos guardados. Cada clip se cruza con su evento
+ * (miniatura, tipo, detalle) cuando existe; los huérfanos salen sin imagen. */
+import { api } from './api.js';
+import { $, bytes, esc, media } from './nucleo.js';
 import { verEvento } from './detalle.js';
+
+/** El tipo del evento va en el nombre: 20261028_104033_0063_objeto_desaparece.webm */
+function tipoDeFichero(f) {
+  const m = /^\d{8}_\d{6}(?:_\d+)?(?:_c\w+)?_([a-z_]+)\.\w+$/.exec(f || '');
+  return m ? m[1] : 'clip';
+}
 
 export function iniciarClips(fuenteDatos) {
   const lista = $('clipList');
@@ -11,15 +19,30 @@ export function iniciarClips(fuenteDatos) {
     if (cargando || !lista) return;
     cargando = true;
     try {
-      const clips = await fuenteDatos.clips();
+      const [clips, ev] = await Promise.all([
+        fuenteDatos.clips(),
+        api('/eventos?limite=500', { tolerante: true }).catch(() => null),
+      ]);
+      const eventos = Array.isArray(ev) ? ev : (ev && ev.eventos) || [];
+      const porClip = new Map(eventos.filter((e) => e.clip).map((e) => [e.clip, e]));
+      const items = (Array.isArray(clips) ? clips : []).map((c) => {
+        const e = porClip.get(c.fichero);
+        return { clip: c, evento: e || { tipo: tipoDeFichero(c.fichero), detalle: c.fichero, clip: c.fichero, cuando: c.cuando } };
+      });
       const total = $('clipsTotal');
-      if (total) total.textContent = `${(clips || []).length} clips`;
-      lista._clips = Array.isArray(clips) ? clips : [];
-      lista.innerHTML = lista._clips.length ? lista._clips.map((c, i) => `
-        <button type="button" class="row" data-clip="${i}">
-          <span class="g"><b>${esc(c.fichero)}</b>
-            <small>${bytes(c.tamano)} · ${esc(c.cuando || '')}</small></span>
-          <span class="tag">▶ reproducir</span>
+      if (total) total.textContent = `${items.length} clips`;
+      lista._items = items;
+      lista.innerHTML = items.length ? items.map(({ clip, evento }, i) => `
+        <button type="button" class="clip-card" data-clip="${i}">
+          <span class="clip-img">
+            ${evento.miniatura ? `<img src="${media(evento.miniatura)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+            <span class="clip-play" aria-hidden="true"></span>
+          </span>
+          <span class="clip-meta">
+            <span class="tag ${esc(evento.tipo)}">${esc(String(evento.tipo).replace(/_/g, ' '))}</span>
+            <b>${esc(evento.detalle && evento.detalle !== clip.fichero ? evento.detalle : (clip.cuando || ''))}</b>
+            <small>${esc(clip.cuando || '')} · ${bytes(clip.tamano)}</small>
+          </span>
         </button>`).join('')
         : '<div class="empty">sin clips todavía</div>';
     } catch (e) {
@@ -32,16 +55,13 @@ export function iniciarClips(fuenteDatos) {
   if (lista && !lista._enlazado) {
     lista._enlazado = true;
     lista.addEventListener('click', (e) => {
-      const fila = e.target.closest('[data-clip]');
-      if (!fila) return;
-      const clip = (lista._clips || [])[Number(fila.dataset.clip)];
-      if (clip) {
-        verEvento({ tipo: 'clip', detalle: clip.fichero, clip: clip.fichero, cuando: clip.cuando });
-      }
+      const tarjeta = e.target.closest('[data-clip]');
+      if (!tarjeta) return;
+      const item = (lista._items || [])[Number(tarjeta.dataset.clip)];
+      if (item) verEvento(item.evento);
     });
   }
-  const refrescar = $('btnRefrescarClips');
-  if (refrescar) refrescar.addEventListener('click', cargar);
+  $('btnRefrescarClips')?.addEventListener('click', cargar);
 
   let huella = '';
   fuenteDatos.al('estado', ({ eventos }) => {

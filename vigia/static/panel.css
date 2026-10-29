@@ -260,6 +260,19 @@ body.wide .layout{grid-template-columns:1fr}
 .act-chip b{font-family:var(--mono);font-size:.76rem;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 7px}
 .act-chip span{color:var(--txt);font-weight:500}
 .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+/* galería de clips */
+#clipList.rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;align-content:start;max-height:calc(100vh - 260px)}
+.clip-card{display:flex;flex-direction:column;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;padding:0;text-align:left;transition:border-color .12s,transform .12s}
+.clip-card:hover{border-color:var(--line-2);transform:translateY(-1px)}
+.clip-img{position:relative;display:block;aspect-ratio:16/9;background:var(--raised)}
+.clip-img img{width:100%;height:100%;object-fit:cover;display:block}
+.clip-play{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(0deg,rgba(0,0,0,.35),transparent 55%)}
+.clip-play::before{content:"";width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.35)}
+.clip-play::after{content:"";position:absolute;border-left:11px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
+.clip-meta{display:flex;flex-direction:column;gap:3px;padding:10px 12px;align-items:flex-start}
+.clip-meta .tag{margin-bottom:2px}
+.clip-meta b{font-size:.84rem;font-weight:600;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clip-meta small{color:var(--txt-3);font-size:.74rem}
 .field.mini{width:110px;padding:4px 9px;font-size:.8rem}
 .mas{display:flex;justify-content:center;padding-top:12px}
 .rows{max-height:calc(100vh - 250px);min-height:240px;overflow:auto;display:flex;flex-direction:column;gap:2px}
@@ -325,7 +338,11 @@ body.wide .layout{grid-template-columns:1fr}
 .carita{width:112px;height:112px;object-fit:cover;border-radius:var(--r);border:1px solid var(--line-2);background:#000}
 .reg{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0 16px}
 .reg-form{flex:1;min-width:200px;display:flex;flex-direction:column;gap:8px}
-.lista-caras{display:flex;flex-direction:column;gap:2px;max-height:340px;overflow:auto}
+.lista-caras{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;max-height:420px;overflow:auto}
+.lista-caras .zitem{padding:6px 8px}
+.lista-caras .zitem input[type=text]{background:transparent;border-color:transparent;font-weight:500}
+.lista-caras .zitem input[type=text]:hover,.lista-caras .zitem input[type=text]:focus{border-color:var(--line-2);background:var(--surface)}
+.lista-caras .empty{grid-column:1 / -1}
 
 /* ---------- formularios ---------- */
 label.f{display:block;font-size:.78rem;color:var(--txt-2);margin:14px 0 5px;font-weight:500}
