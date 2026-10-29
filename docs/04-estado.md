@@ -1,4 +1,4 @@
-# Vigia — Estado del Proyecto
+﻿# Vigia — Estado del Proyecto
 
 > fecha_actualizacion: 2026-10-29
 > estado_general: fases_1-8_hechas · plan_v2_hecho_salvo_camaras_ip · ronda3_gui_v3_y_percepcion_integradas
@@ -19,7 +19,7 @@
 - **Repositorio:** dentro del vault (git). Carpeta de código en
   `vigia/` con su propio `.gitignore`.
 
-## Estado actual (28/10/2026)
+## Estado actual (29/10/2026)
 
 | Fase | Estado | Notas |
 |---|---|---|
@@ -67,6 +67,7 @@
 | 2026-10-28 | **Revision y pulido (Claude)**: caras (cajas YuNet xywh), IDs estables + confirmacion de entrada, clasificador de actividad reescrito con votacion, lector de camara y pose/caras en hilos (11 -> ~18-20 fps; 960x540 por limite del driver a 720p), snapshot limpio para zonas, middleware anti-CSRF y anti-proxy sin token, backend de camara portable (Linux). Suite 267. |
 
 | 2026-10-29 | **Ronda 3**: dos terminales (opencode) hicieron percepción (A) y eventos/plataforma (B) y se pararon a medias; Claude revisó, integró y commiteó su trabajo. Fallos reales corregidos al revisar: histéresis de líneas comparaba un producto vectorial (no píxeles), el cooldown inicial suprimía el primer cruce, y los objetos globales no se reiniciaban fuera de franja. 294 tests (16 nuevos en `tests/test_percepcion_ronda3.py`). GUI v3 completa hecha por Claude; `/video.mjpg?limpio=1` añadido. |
+| 2026-10-29 | **Verificacion con servidor real (Claude)**: 294 tests, endpoints de la ronda 3 en 200, modelos cargan, 21 fps. Camara 0 = Iriun apagado (video negro). Terminales A/B paradas por limite de uso; nada nuevo sin integrar. Pendientes reordenados en 'Tareas pendientes (29/10)'. |
 
 ## Datos técnicos acumulados
 
@@ -84,19 +85,36 @@
 
 - **Medio cuerpo (29/10):** con la cámara de escritorio los hombros salen con confianza ~0,9 pero caderas 0,02–0,4 y rodillas ~0,01. Con eso **sentado vs de pie no se puede decidir de forma fiable por pose**. Para mejorar de verdad: colocar la cámara más lejos/alta para ver caderas y rodillas, o usar contexto (mesa, portátil, movimiento). `eval/` mide hoy solo 4 clips con etiquetas rápidas: no es ground truth.
 
-(vacío — cada fase deja aquí qué aprendimos, en especial lo que
-aporte al futuro módulo de escalada)
+- **Terminales opencode (29/10):** se paran por límite de uso dejando trabajo sin commitear
+  y con tests rotos; revisar siempre `git status` + suite antes de integrar. Bugs que
+  pasaron su revisión: histéresis de líneas en unidades equivocadas, cooldown inicial que
+  suprimía el primer cruce, objetos globales sin reiniciar fuera de franja.
+- **Cámara 0 = Iriun (29/10):** si la app no está abierta, el vídeo es una pantalla negra
+  con texto pero el servidor sigue «ok» a ~21 fps; no es un fallo de código.
 
 ## Próxima acción concreta
 
-Siguiente bloque grande del plan v2: **cámaras IP RTSP y multicámara (bloque 5)**.
-Antes, cerrar lo que está escrito pero sin comprobar (lista de abajo).
+1. **Arrancar Iriun Webcam** (la cámara 0 es Iriun; sin la app el vídeo sale negro con
+   «Please start Iriun Webcam») y validar con imagen real todo lo de la lista A.
+2. Después, bloque grande del plan v2: **cámaras IP RTSP y multicámara (bloque 5)**.
 
-## Tareas pendientes (28/10/2026)
+## Tareas pendientes (29/10/2026)
+
+Verificado el 29/10 con servidor real (`python -m vigia.web`, :8000): 294 tests verdes,
+modelos de pose y caras cargan, 21 fps, y `/vivo /resumen /estadisticas /lineas /logs
+/eventos /estado` responden 200. Árbol limpio y sincronizado con `origin/main`.
+Las terminales opencode A y B se pararon por límite de uso: lo que dejaron está
+integrado y revisado; **lo no hecho es la lista B** (P3–P5 de `docs/prompts/`).
 
 ### A. Probar en real (lo escrito pero no comprobado)
 - [ ] **Actividad**: sentarse/levantarse con el móvil y ajustar umbrales de
-      `actividades.py` si "sentado"/"de pie" fallan en tu postura real.
+      `actividades.py` si "sentado"/"de pie" fallan en tu postura real. Con medio
+      cuerpo visible no es fiable (ver Aprendizajes): subir/alejar la cámara.
+- [ ] **Overlay y `/vivo`**: esqueleto, cajas y tarjetas «Personas ahora» con una persona delante.
+- [ ] **Líneas de cruce**: trazar una en la puerta (Zonas → Línea) y comprobar
+      A/B, sentido y que entra/sale no se duplican.
+- [ ] **Entrada/salida** con reasociación por apariencia (sin medir con cámara real).
+- [ ] **Layout móvil** de la GUI (no verificado: no se pudo estrechar la ventana).
 - [ ] **Caras**: registrar otra muestra de frente (sin capucha) y comprobar
       `persona_reconocida`; ver que Lucas ya no dispara permanencia.
 - [ ] **Reglas por zona** con cámara real (restringida, aforo, merodeo, inmóvil).
@@ -112,20 +130,22 @@ Antes, cerrar lo que está escrito pero sin comprobar (lista de abajo).
    detectar y mainstream para clips, reconexión robusta.
 2. **Personas** (bloque 7): conjunto de prueba con clips reales, probar `yolo11s/m`,
    BoT-SORT con re-ID, máscaras de ignorar, validar visión nocturna, ONNX/TensorRT.
-3. **Acciones** (bloque 8): ventana temporal de keypoints, `persona_caida`, "usando
-   móvil/PC" por orientación de cabeza, más actividades.
+3. **Acciones** (bloque 8): `persona_caida` ya existe (DetectorCaidas, solo con tests);
+   falta "usando móvil/PC" por orientación de cabeza y contexto (mesa/portátil).
+   **Ground truth de `eval/`**: etiquetar clips reales a mano (hoy 4, acierto de
+   actividad no fiable) y medir antes de tocar umbrales.
 4. **Caras** (bloque 9): asistente de varias muestras, comprobación de calidad,
    registrar desde un evento del historial, umbral por persona, re-ID de cuerpo,
    política de privacidad de los embeddings.
-5. **`/logs`**: endpoint para la vista Sistema (hoy muestra "pendiente").
-6. **Polígonos en el vídeo**: `dibujo.py` solo pinta cajas.
+5. **GUI**: `/logs` en tiempo real (hoy se refresca a mano); ajustes de umbrales de
+   actividad en la vista Ajustes; mostrar `zona_entra`/`zona_sale` en la línea del tiempo.
+6. **Polígonos en el vídeo**: `dibujo.py` solo pinta cajas (la GUI dibuja zonas en el editor).
 7. **Telegram**: clip WebM → MP4 H.264 si el móvil no lo reproduce (TODO en `telegram.py`).
 8. **VLM local** (Ollama/LM Studio) para describir eventos y resumen diario: medir
    latencia y VRAM; solo en eventos, nunca por frame.
-9. **Pequeños**: unificar `detail`/`detalle` en las respuestas de error; reglas por
-   zona fuera de la franja global; persona en dos zonas se asigna solo a la primera;
-   validar rango de coordenadas de zonas; `main.py` (ventana de escritorio) no usa
-   los hilos nuevos.
+9. **Pequeños**: persona en dos zonas se asigna solo a la primera; `main.py` (ventana
+   de escritorio) no usa los hilos nuevos. (Hechos en ronda 3: `detail`/`detalle`,
+   reglas de zona fuera de franja, validación de coordenadas.)
 
 ### C. Decisiones abiertas (de `06-plan-v2.md`)
 - ¿Cuántas cámaras IP, marca/modelo (RTSP/ONVIF), Wi-Fi o PoE?
