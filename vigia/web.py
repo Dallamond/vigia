@@ -13,8 +13,10 @@ Arranque: .venv\\Scripts\\python.exe -m vigia.web   →  http://localhost:8000
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import queue
 import re
 import shutil
 import threading
@@ -27,9 +29,11 @@ from urllib.parse import urlsplit
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .almacen import Almacen
 from .armado import GestorArmado
@@ -43,7 +47,7 @@ from .config import RAIZ, cargar_config, ruta_proyecto
 from .detector import Deteccion, Detector
 from .dibujo import dibujar, frame_aviso
 from .eventos import MotorEventos
-from .logs import configurar_logging
+from .logs import configurar_logging, leer_log
 from .mantener import mantener
 from .notificaciones import notificar
 from .seguridad import (CABECERAS_SEGURIDAD, RUTAS_PUBLICAS,
@@ -72,9 +76,54 @@ _EXT_MEDIA = {".webm": "video/webm", ".mp4": "video/mp4",
 
 # fichero donde se persisten los ajustes del dashboard (los tests lo cambian)
 _RUTA_CONFIG = RAIZ / "config.yaml"
+# carpeta del log rotativo (los tests pueden apuntarla a tmp_path)
+_RUTA_LOGS = RAIZ / "logs"
 _persistir_lock = threading.Lock()
 
 _INICIO = time.monotonic()
+
+
+class _BusEventos:
+    """Reparto de eventos nuevos a los clientes SSE (`GET /eventos/stream`).
+
+    Cada suscriptor tiene su propia cola: un cliente lento no bloquea al bucle
+    de video. Si se llena, se descarta el evento mas viejo de ese cliente (la
+    GUI nueva siempre pide `/eventos` al arrancar, asi que no pierde historia).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._oyentes: set[queue.Queue] = set()
+
+    def suscribir(self, maxsize: int = 200) -> queue.Queue:
+        cola: queue.Queue = queue.Queue(maxsize=maxsize)
+        with self._lock:
+            self._oyentes.add(cola)
+        return cola
+
+    def desuscribir(self, cola: queue.Queue) -> None:
+        with self._lock:
+            self._oyentes.discard(cola)
+
+    def publicar(self, evento: dict) -> None:
+        with self._lock:
+            oyentes = list(self._oyentes)
+        for cola in oyentes:
+            try:
+                cola.put_nowait(evento)
+            except queue.Full:
+                try:
+                    cola.get_nowait()
+                    cola.put_nowait(evento)
+                except (queue.Empty, queue.Full):
+                    log.debug("cliente SSE lento: evento descartado")
+
+    def oyentes(self) -> int:
+        with self._lock:
+            return len(self._oyentes)
+
+
+_bus_eventos = _BusEventos()
 
 # lo que el bucle publica para las rutas web
 _actividades_personas: dict[int, str] = {}   # {id_tracking: actividad}
@@ -150,26 +199,37 @@ def _jpeg(frame) -> bytes:
 def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
                    frame, tipo: str, detalle: str | None = "",
                    id_tracking: int | None = None,
-                   evento_id: int | None = None) -> int | None:
+                   evento_id: int | None = None,
+                   zona: str | None = None,
+                   camara_id: str | int | None = None) -> int | None:
     """Unico punto de salida de un evento: persiste, guarda media y publica.
 
     - si el evento ya existe (motor), se reutiliza su `evento_id`
     - guarda una miniatura JPEG del frame actual
     - en los eventos grandes guarda tambien el clip de los ultimos segundos
     - lanza el aviso de Windows solo para los tipos de `_AVISOS`
+    - publica en el bus SSE y en el feed en memoria
     """
+    camara = "0" if camara_id is None else str(camara_id)
     if evento_id is None:
         evento_id = almacen.guardar(tipo, id_tracking=id_tracking,
-                                    detalle=detalle)
+                                    detalle=detalle, zona=zona,
+                                    camara_id=camara)
+    ahora = datetime.now()
+    miniatura = clip = None
     clip_path = None
     if clips is not None:
-        miniatura = None
         if config.get("miniaturas", True):
-            p = clips.guardar_miniatura(frame, tipo)
+            try:
+                p = clips.guardar_miniatura(frame, tipo, camara_id=camara)
+            except TypeError:  # dobles de test con la firma antigua
+                p = clips.guardar_miniatura(frame, tipo)
             miniatura = p.name if p else None
-        clip = None
         if tipo in _EVENTOS_GRANDES and config.get("guardar_clips", True):
-            p = clips.guardar(tipo)
+            try:
+                p = clips.guardar(tipo, camara_id=camara)
+            except TypeError:  # dobles de test con la firma antigua
+                p = clips.guardar(tipo)
             clip = p.name if p else None
             clip_path = p
         try:
@@ -187,6 +247,19 @@ def _anotar_evento(estado: Estado, almacen: Almacen, clips, config: dict,
         except Exception:
             log.exception("no se pudo encolar el aviso de Telegram")
     estado.anadir_evento(tipo, detalle or "")
+    _bus_eventos.publicar({
+        "id": evento_id,
+        "marca": ahora.strftime("%Y-%m-%d %H:%M:%S"),
+        "hora": ahora.strftime("%H:%M:%S"),
+        "tipo": tipo,
+        "etiqueta": detalle or "",
+        "detalle": detalle,
+        "id_tracking": id_tracking,
+        "zona": zona,
+        "camara_id": camara,
+        "miniatura": miniatura,
+        "clip": clip,
+    })
     return evento_id
 
 
@@ -444,6 +517,25 @@ def bucle_procesamiento(estado: Estado, almacen: Almacen | None = None,
 
 
 app = FastAPI(title="Vigia")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _errores_http(request: Request, exc: StarletteHTTPException):
+    """Mismo texto en `detail` y `detalle` (contratos viejo y nuevo)."""
+    return JSONResponse(
+        {"detail": exc.detail, "detalle": exc.detail},
+        status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def _errores_validacion(request: Request,
+                               exc: RequestValidationError):
+    from fastapi.encoders import jsonable_encoder
+    detalle = jsonable_encoder(exc.errors())
+    return JSONResponse({"detail": detalle, "detalle": detalle},
+                        status_code=422)
+
+
 # el panel nuevo carga css y modulos js desde /static; el middleware ya deja
 # pasar ese prefijo sin token, igual que /auth/
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"),
@@ -501,7 +593,8 @@ def _es_publica(ruta: str) -> bool:
 
 
 def _respuesta_no_autenticado() -> JSONResponse:
-    return JSONResponse({"detalle": "no autenticado"}, status_code=401,
+    return JSONResponse({"detalle": "no autenticado",
+                         "detail": "no autenticado"}, status_code=401,
                         headers=dict(CABECERAS_SEGURIDAD))
 
 
@@ -522,7 +615,8 @@ async def _middleware_seguridad(request: Request, call_next):
             request):
         # CSRF: una web cualquiera abierta en tu navegador no debe poder
         # cambiar la config de un panel escuchando en localhost
-        return JSONResponse({"detalle": "origen no permitido"},
+        return JSONResponse({"detalle": "origen no permitido",
+                             "detail": "origen no permitido"},
                             status_code=403,
                             headers=dict(CABECERAS_SEGURIDAD))
     if not _es_publica(ruta):
@@ -534,7 +628,8 @@ async def _middleware_seguridad(request: Request, call_next):
                     or "x-forwarded-for" in request.headers
                     or "forwarded" in request.headers):
                 return JSONResponse(
-                    {"detalle": "sin VIGIA_TOKEN solo se permite localhost"},
+                    {"detalle": "sin VIGIA_TOKEN solo se permite localhost",
+                     "detail": "sin VIGIA_TOKEN solo se permite localhost"},
                     status_code=403, headers=dict(CABECERAS_SEGURIDAD))
         else:
             token_query = (request.query_params.get("token")
@@ -756,11 +851,162 @@ def snapshot(limpio: bool = False) -> Response:
 
 
 @app.get("/eventos")
-def eventos_json(response: Response) -> list[dict]:
+def eventos_json(response: Response, tipo: str | None = None,
+                 camara_id: str | None = None,
+                 desde: str | None = None, hasta: str | None = None,
+                 persona: int | None = None, zona: str | None = None,
+                 limite: int | None = None,
+                 antes_id: int | None = None):
+    """Feed en memoria (compatibilidad) o consulta paginada en SQLite.
+
+    - Sin parametros: lista de los ultimos eventos en memoria, como siempre
+      (`[{"hora","tipo","etiqueta"}]`).
+    - Con cualquier parametro (`limite`, `antes_id`, `tipo`, `camara_id`,
+      `desde`, `hasta`, `persona`, `zona`): objeto
+      `{"eventos": [...], "total": n, "limite": n, "antes_id": ...}`.
+    """
     response.headers["Cache-Control"] = "no-store"
-    with estado.cerradura:
-        return [{"hora": h, "tipo": t, "etiqueta": e}
-                for h, t, e in estado.eventos]
+    nuevo = any(v is not None for v in (
+        tipo, camara_id, desde, hasta, persona, zona, limite, antes_id))
+    if not nuevo:
+        with estado.cerradura:
+            return [{"hora": h, "tipo": t, "etiqueta": e}
+                    for h, t, e in estado.eventos]
+    for nombre, valor in (("desde", desde), ("hasta", hasta)):
+        if valor is not None:
+            _instante(valor, nombre)
+    limite = max(1, min(int(limite or 100), 500))
+    datos = _almacen.listar_eventos(
+        limite=limite, antes_id=antes_id, tipo=tipo, camara_id=camara_id,
+        desde=desde, hasta=hasta, persona=persona, zona=zona)
+    datos.update({"limite": limite, "antes_id": antes_id,
+                  "siguiente_antes_id": (datos["eventos"][-1]["id"]
+                                         if datos["eventos"] else None)})
+    return datos
+
+
+def _instante(valor: str, nombre: str) -> str:
+    """Valida `AAAA-MM-DD` o `AAAA-MM-DD HH:MM:SS`; 400 si no encaja."""
+    texto = str(valor).strip()
+    for formato in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            datetime.strptime(texto, formato)
+            return texto
+        except ValueError:
+            continue
+    raise HTTPException(400, f"{nombre}: AAAA-MM-DD[ HH:MM:SS]")
+
+
+@app.get("/eventos/stream")
+def eventos_stream(request: Request, limite: int = 0):
+    """SSE: cada evento nuevo y un `ping` cada 15 s.
+
+    `?limite=N` cierra el stream tras N eventos (util en tests y para clientes
+    que solo quieren una foto del feed). El bus se limpia siempre al cerrar.
+    """
+    def gen():
+        cola = _bus_eventos.suscribir()
+        enviados = 0
+        try:
+            yield b": conectado\n\n"
+            while True:
+                try:
+                    evento = cola.get(timeout=15.0)
+                except queue.Empty:
+                    yield b"event: ping\ndata: {}\n\n"
+                    continue
+                datos = json.dumps(evento, ensure_ascii=False)
+                yield f"event: evento\ndata: {datos}\n\n".encode("utf-8")
+                enviados += 1
+                if limite and enviados >= limite:
+                    break
+        finally:
+            _bus_eventos.desuscribir(cola)
+
+    return StreamingResponse(
+        gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "Connection": "keep-alive",
+                 "X-Accel-Buffering": "no"})
+
+
+@app.get("/logs")
+def logs_json(response: Response, limite: int = 200,
+              nivel: str | None = None) -> dict:
+    """Ultimas lineas de `logs/vigia.log` para la vista Sistema."""
+    response.headers["Cache-Control"] = "no-store"
+    return leer_log(_RUTA_LOGS, limite=limite, nivel=nivel)
+
+
+@app.get("/estadisticas")
+def estadisticas_json(response: Response, dias: int = 7) -> dict:
+    """Agregados de eventos para el Dashboard (SQL, sin traerse todo)."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        dias = max(1, min(int(dias), 365))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "dias debe ser un entero")
+    return _almacen.estadisticas(dias)
+
+
+def _aforo_guardado() -> int:
+    try:
+        valor = _almacen.leer_estado("aforo_actual")
+        return int(valor or 0)
+    except Exception:
+        log.exception("no se pudo leer el aforo actual")
+        return 0
+
+
+def _resumen_camaras() -> dict:
+    _, fps, _, ids, ok = estado.snapshot()
+    camaras = [{"id": "0", "nombre": "Camara", "estado":
+                "conectada" if ok else "caida",
+                "fps": round(fps, 1), "personas": len(ids)}]
+    return {"actual": "0", "camaras": camaras}
+
+
+@app.get("/resumen")
+def resumen_json(response: Response) -> dict:
+    """Todo lo del Dashboard en una sola llamada (menos polling)."""
+    response.headers["Cache-Control"] = "no-store"
+    _, fps, _, ids, camara_ok = estado.snapshot()
+    hoy = datetime.now().date().isoformat()
+    try:
+        est = _almacen.estadisticas(1)
+        ultimo = _almacen.historial(limite=1)
+        db_bytes = _almacen.tamano_bytes()
+        total_eventos = _almacen.contar()
+    except Exception:
+        log.exception("no se pudo leer la BD para /resumen")
+        est, ultimo, db_bytes, total_eventos = {}, [], 0, 0
+    try:
+        raiz = _clips.carpeta if _clips is not None else RAIZ
+        uso = shutil.disk_usage(str(raiz))
+        disco = {"libre_gb": round(uso.free / 1024 ** 3, 1),
+                 "total_gb": round(uso.total / 1024 ** 3, 1)}
+    except OSError:
+        disco = {"libre_gb": 0.0, "total_gb": 0.0}
+    telegram = estado_config(_config)
+    if _telegram is not None:
+        telegram.update(_telegram.estado())
+    return {
+        "version": VERSION,
+        "uptime_seg": int(time.monotonic() - _INICIO),
+        "camara": {"ok": camara_ok, "fps": round(fps, 1),
+                   "personas": len(ids), "ids": sorted(ids),
+                   "ancho": estado.ancho, "alto": estado.alto},
+        "camaras": _resumen_camaras(),
+        "armado": _gestor_armado.estado(),
+        "eventos_hoy": {"dia": hoy,
+                        "total": est.get("total", 0),
+                        "por_tipo": est.get("por_tipo", {})},
+        "ultimo_evento": ultimo[0] if ultimo else None,
+        "total_eventos": total_eventos,
+        "aforo_actual": _aforo_guardado(),
+        "disco": disco,
+        "db_bytes": db_bytes,
+        "telegram": telegram,
+    }
 
 
 @app.get("/historial")

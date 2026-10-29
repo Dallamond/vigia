@@ -234,3 +234,147 @@
   (cámara 2): 11 → ~20 fps a 640x480; **1280x720 solo da 10 fps de cámara pura
   (driver), 960x540 da 30** → `config.yaml` queda en 960x540.
 - Pendiente: el snapshot del editor de zonas lleva pintadas las detecciones.
+
+## Contrato Ronda 3 — B
+
+> Todo lo de esta seccion es **aditivo**: los contratos anteriores siguen
+> valiendo. Los endpoints nuevos pasan por el mismo middleware (cookie/Bearer;
+> sin token, solo localhost).
+
+### `GET /estadisticas?dias=7`
+
+Agregados en SQL (indices `tipo+marca_sistema` y `camara_id`). `dias` 1..365
+(fuera de rango se recorta; no numerico -> 422).
+
+```json
+{
+  "dias": 7,
+  "desde": "2026-10-23 00:00:00",
+  "hasta": "2026-10-29 18:20:00",
+  "total": 184,
+  "por_tipo": {"persona_entra": 40, "permanencia": 12, "actividad": 90},
+  "por_hora": [0, 0, 2, 0, 1, 5, "…24 enteros, indice = hora local…"],
+  "por_dia": [{"dia": "2026-10-28", "n": 90}, {"dia": "2026-10-29", "n": 94}],
+  "actividades": {"usando movil": 1830.0, "de pie": 640.0},
+  "personas_distintas": 6,
+  "ocupacion_media": 0.03,
+  "ocupacion_max": 3,
+  "picos": {
+    "hora": {"hora": 18, "n": 22},
+    "dia": {"dia": "2026-10-29", "n": 94},
+    "personas": {"n": 3, "t_seg": 43200}
+  }
+}
+```
+
+- `actividades`: segundos acumulados a partir de los eventos `actividad`
+  (tramo entre eventos consecutivos de la misma persona, con tope de 10 min
+  para no contar huecos nocturnos). Es una aproximacion, no un cronometro.
+- `ocupacion_media` = persona-segundos dentro / segundos de la ventana;
+  `ocupacion_max` = maximo simultaneo emparejando `persona_entra`/`persona_salio`.
+
+### `GET /logs?limite=200&nivel=INFO`
+
+Ultimas lineas del log rotativo, **mas recientes primero**. Parseo tolerante:
+las lineas que no siguen el formato salen con `nivel: "?"`.
+
+```json
+{
+  "lineas": [
+    {"t": "2026-10-29 18:20:01,123", "nivel": "ERROR",
+     "modulo": "vigia.eventos", "msg": "fallo ..."},
+    {"t": "", "nivel": "?", "modulo": "", "msg": "traza sin formato"}
+  ],
+  "tamano_bytes": 812345,
+  "rotaciones": 2
+}
+```
+
+### `GET /eventos/stream` (SSE, `text/event-stream`)
+
+- `event: evento` con `data:` = un objeto como los de `/eventos` (con campos
+  extra): `{id, marca, hora, tipo, etiqueta, detalle, id_tracking, zona,
+  camara_id, miniatura, clip}`.
+- `event: ping` con `data: {}` cada 15 s si no hay novedades.
+- Autenticacion normal por cookie/Bearer (EventSource del navegador envia la
+  cookie). `?limite=N` cierra tras N eventos; sin limite es infinito.
+- Es un bus en memoria del proceso: no reenvia historia. Al arrancar, pedir
+  `/eventos` y luego abrir el stream (o usar `?limite`). Al desconectar el
+  cliente se desuscribe (sin hilos colgados).
+
+### `GET /eventos` paginado y filtrable
+
+Sin parametros devuelve **la lista de siempre** (retrocompatible). En cuanto se
+manda cualquier parametro devuelve objeto:
+
+```json
+{
+  "eventos": [{"id": 184, "marca_sistema": "2026-10-29 18:19:00",
+               "marca_pantalla": "18:19:00", "tipo": "persona_entra",
+               "id_tracking": 3, "detalle": "id 3", "miniatura": "…jpg",
+               "clip": null, "camara_id": "0", "zona": null}],
+  "total": 184,
+  "limite": 20,
+  "antes_id": null,
+  "siguiente_antes_id": 165
+}
+```
+
+- Parametros combinables: `limite` (1..500), `antes_id`, `tipo`,
+  `camara_id`, `desde`, `hasta` (`AAAA-MM-DD` o `AAAA-MM-DD HH:MM:SS`),
+  `persona` (= `id_tracking`), `zona`.
+- `total` cuenta todas las filas que cumplen filtros, antes de paginar.
+  Para la pagina siguiente: `?antes_id=<siguiente_antes_id>`.
+
+### `GET /resumen`
+
+Todo el Dashboard en una llamada: estado de camara, armado, FPS, eventos de
+hoy por tipo, ultimo evento, disco, uptime, Telegram, aforo.
+
+```json
+{
+  "version": "0.8",
+  "uptime_seg": 3600,
+  "camara": {"ok": true, "fps": 18.4, "personas": 1, "ids": [3],
+             "ancho": 960, "alto": 540},
+  "camaras": {"actual": "0",
+              "camaras": [{"id": "0", "nombre": "Camara",
+                           "estado": "conectada", "fps": 18.4,
+                           "personas": 1}]},
+  "armado": {"armado": false, "auto": false, "desde": null, "franjas": []},
+  "eventos_hoy": {"dia": "2026-10-29", "total": 94,
+                  "por_tipo": {"persona_entra": 8, "permanencia": 3}},
+  "ultimo_evento": {"id": 184, "tipo": "persona_entra", "…": "…"},
+  "total_eventos": 1200,
+  "aforo_actual": 1,
+  "disco": {"libre_gb": 120.4, "total_gb": 930.2},
+  "db_bytes": 812345,
+  "telegram": {"configurado": false, "activo": false, "ultimo_error": null,
+               "pendientes": 0}
+}
+```
+
+### Errores unificados
+
+Toda respuesta de error lleva **el mismo texto** en `detail` y `detalle`
+(HTTPException, validacion 422 y respuestas del middleware de seguridad).
+El 401 sigue siendo `{"detalle": "no autenticado", "detail": "no autenticado"}`
+con codigo 401.
+
+### Cambios internos relevantes
+
+- BD: migracion automatica a `user_version=3` con columnas `camara_id
+  TEXT DEFAULT '0'` y `zona TEXT` (filas antiguas quedan en camara `"0"`).
+- `_anotar_evento`, `GuardadorClips.guardar*` aceptan `camara_id`; la camara
+  `"0"` conserva los nombres de fichero de siempre (`_c<id>` para las demas).
+- El feed SSE se publica desde `_anotar_evento` (unico punto de salida).
+
+## Ronda 3 — B
+
+### P1 — datos para el panel (hecho)
+
+- `GET /estadisticas`, `GET /logs`, `GET /eventos/stream`, `/eventos`
+  paginado/filtrable y `GET /resumen`.
+- Tests en `tests/test_panel.py` (agregados, parseo de logs, SSE con cliente
+  que lee el evento, paginacion, filtros, resumen y errores con `detail` +
+  `detalle`). El 401 se ajusto para aceptar el campo extra (contrato aditivo).

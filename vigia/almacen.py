@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS eventos (
 );
 CREATE INDEX IF NOT EXISTS idx_eventos_tiempo ON eventos(marca_sistema);
 CREATE INDEX IF NOT EXISTS idx_eventos_tipo ON eventos(tipo);
+CREATE INDEX IF NOT EXISTS idx_eventos_tipo_tiempo ON eventos(tipo, marca_sistema);
 CREATE TABLE IF NOT EXISTS rostros (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
@@ -41,12 +42,92 @@ CREATE TABLE IF NOT EXISTS estado_sistema (
 _COLUMNAS_NUEVAS = {
     "miniatura": "TEXT",  # fichero .jpg del momento del evento
     "clip": "TEXT",       # fichero .mp4 asociado (si lo hay)
+    # multicamara: la camara que genero el evento ("0" = camara unica clasica).
+    # El DEFAULT hace que las filas antiguas queden como camara 0.
+    "camara_id": "TEXT DEFAULT '0'",
+    # zona implicada (para filtrar sin analizar el texto de `detalle`)
+    "zona": "TEXT",
 }
 
-_VERSION_ESQUEMA = 2
+_VERSION_ESQUEMA = 3
 _FORMATO = "%Y-%m-%d %H:%M:%S"
 _COLS = ("id", "marca_sistema", "marca_pantalla", "tipo", "id_tracking",
-         "detalle", "miniatura", "clip")
+         "detalle", "miniatura", "clip", "camara_id", "zona")
+
+
+def _fecha_desde(valor: str) -> str:
+    """Acepta `AAAA-MM-DD` o `AAAA-MM-DD HH:MM:SS` y devuelve el inicio."""
+    texto = str(valor).strip()
+    if len(texto) == 10:
+        return f"{texto} 00:00:00"
+    return texto
+
+
+def _fecha_hasta(valor: str) -> str:
+    texto = str(valor).strip()
+    if len(texto) == 10:
+        return f"{texto} 23:59:59"
+    return texto
+
+
+def _actividad_de(detalle: str | None) -> str | None:
+    """Saca la actividad de un detalle `id 7 usando movil`."""
+    if not detalle:
+        return None
+    partes = str(detalle).strip().split(maxsplit=2)
+    if len(partes) == 3 and partes[0] == "id":
+        return partes[2].strip() or None
+    return str(detalle).strip() or None
+
+
+def _ocupacion(filas, desde: str, hasta: str
+               ) -> tuple[float, int, int]:
+    """(ocupacion media, maximo simultaneo, instante del maximo).
+
+    Aproxima la ocupacion emparejando `persona_entra` con su `persona_salio`.
+    Una persona que sigue dentro al final de la ventana cuenta hasta `hasta`.
+    """
+    try:
+        t_ini = datetime.strptime(desde, _FORMATO)
+        t_fin = datetime.strptime(hasta, _FORMATO)
+    except (TypeError, ValueError):
+        return 0.0, 0, 0
+    intervalos: list[tuple[datetime, datetime]] = []
+    abiertos: dict[int, datetime] = {}
+    for pid, tipo, cuando in filas:
+        try:
+            momento = datetime.strptime(cuando, _FORMATO)
+        except (TypeError, ValueError):
+            continue
+        if tipo == "persona_entra":
+            abiertos[pid] = momento
+        elif tipo == "persona_salio" and pid in abiertos:
+            intervalos.append((abiertos.pop(pid), momento))
+    for inicio in abiertos.values():
+        intervalos.append((inicio, t_fin))
+    recortados = []
+    for inicio, fin in intervalos:
+        inicio = max(inicio, t_ini)
+        fin = min(fin, t_fin)
+        if fin > inicio:
+            recortados.append((inicio, fin))
+    ventana = max((t_fin - t_ini).total_seconds(), 1.0)
+    persona_seg = sum((fin - inicio).total_seconds()
+                      for inicio, fin in recortados)
+    eventos = []
+    for inicio, fin in recortados:
+        eventos.append((inicio, 1))
+        eventos.append((fin, -1))
+    eventos.sort(key=lambda par: (par[0], -par[1]))  # entradas antes que salidas
+    actual = maximo = 0
+    instante_max = t_ini
+    for momento, delta in eventos:
+        actual += delta
+        if actual > maximo:
+            maximo = actual
+            instante_max = momento
+    return (persona_seg / ventana, maximo,
+            int((instante_max - t_ini).total_seconds()))
 
 
 class Almacen:
@@ -77,6 +158,13 @@ class Almacen:
                 self.con.execute(
                     f"ALTER TABLE eventos ADD COLUMN {nombre} {tipo}")
                 log.info("BD migrada: columna %s anadida", nombre)
+        # indices sobre columnas migradas (no pueden ir en _ESQUEMA porque una
+        # BD antigua aun no las tiene cuando se ejecuta)
+        self.con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_eventos_camara "
+            "ON eventos(camara_id)")
+        self.con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_eventos_zona ON eventos(zona)")
         # solo se sube: abrir una BD de una version futura no la "degrada"
         actual = self.con.execute("PRAGMA user_version").fetchone()[0]
         if actual < _VERSION_ESQUEMA:
@@ -87,18 +175,22 @@ class Almacen:
                 detalle: str | None = None,
                 miniatura: str | None = None,
                 clip: str | None = None,
-                cuando: str | None = None) -> int:
+                cuando: str | None = None,
+                zona: str | None = None,
+                camara_id: str | int | None = None) -> int:
         """Inserta un evento y devuelve su id (para enlazarle media)."""
         momento = datetime.now() if cuando is None else datetime.strptime(
             cuando, _FORMATO)
         ahora = momento.strftime(_FORMATO)
         pantalla = momento.strftime("%H:%M:%S")
+        camara = "0" if camara_id is None else str(camara_id)
         with self._lock:
             cur = self.con.execute(
                 "INSERT INTO eventos (marca_sistema, marca_pantalla, tipo, "
-                "id_tracking, detalle, miniatura, clip) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (ahora, pantalla, tipo, id_tracking, detalle, miniatura, clip))
+                "id_tracking, detalle, miniatura, clip, camara_id, zona) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (ahora, pantalla, tipo, id_tracking, detalle, miniatura, clip,
+                 camara, zona))
             self.con.commit()
             return int(cur.lastrowid or 0)
 
@@ -206,6 +298,161 @@ class Almacen:
                 "ORDER BY marca_sistema ASC, id ASC LIMIT ?",
                 (desde, hasta, limite)).fetchall()
         return [dict(zip(_COLS, f)) for f in filas]
+
+    def listar_eventos(self, limite: int = 100,
+                       antes_id: int | None = None,
+                       tipo: str | None = None,
+                       camara_id: str | int | None = None,
+                       desde: str | None = None,
+                       hasta: str | None = None,
+                       persona: int | None = None,
+                       zona: str | None = None) -> dict:
+        """Consulta paginada y filtrable para `GET /eventos`.
+
+        Devuelve `{"eventos": [...], "total": n}`. `total` cuenta todas las
+        filas que cumplen los filtros (sin aplicar `limite` ni `antes_id`), lo
+        que permite a la GUI pintar "N de M" y pedir la pagina siguiente.
+        """
+        try:
+            limite = max(1, min(int(limite), 500))
+        except (TypeError, ValueError):
+            limite = 100
+        condiciones = ["1=1"]
+        args: list = []
+        if tipo:
+            condiciones.append("tipo = ?")
+            args.append(str(tipo))
+        if camara_id is not None and str(camara_id) != "":
+            condiciones.append("camara_id = ?")
+            args.append(str(camara_id))
+        if desde:
+            condiciones.append("marca_sistema >= ?")
+            args.append(_fecha_desde(desde))
+        if hasta:
+            condiciones.append("marca_sistema <= ?")
+            args.append(_fecha_hasta(hasta))
+        if persona is not None:
+            try:
+                condiciones.append("id_tracking = ?")
+                args.append(int(persona))
+            except (TypeError, ValueError):
+                condiciones.append("0")
+        if zona:
+            # las filas antiguas no tienen columna zona: se busca en detalle
+            condiciones.append(
+                "(zona = ? OR (zona IS NULL AND detalle LIKE ?))")
+            args.extend([str(zona), f"%zona={zona}%"])
+        where = " WHERE " + " AND ".join(condiciones)
+        total_q = "SELECT COUNT(*) FROM eventos" + where
+        q = f"SELECT {', '.join(_COLS)} FROM eventos" + where
+        args_consulta = list(args)
+        if antes_id is not None:
+            try:
+                q += " AND id < ?"
+                args_consulta.append(int(antes_id))
+            except (TypeError, ValueError):
+                pass
+        q += " ORDER BY id DESC LIMIT ?"
+        args_consulta.append(limite)
+        with self._lock:
+            total = int(self.con.execute(total_q, args).fetchone()[0])
+            filas = self.con.execute(q, args_consulta).fetchall()
+        return {"eventos": [dict(zip(_COLS, f)) for f in filas],
+                "total": total}
+
+    def estadisticas(self, dias: int = 7,
+                     ahora: datetime | None = None) -> dict:
+        """Agregados para el panel profesional (`GET /estadisticas`)."""
+        try:
+            dias = max(1, min(int(dias), 365))
+        except (TypeError, ValueError):
+            dias = 7
+        ahora = ahora or datetime.now()
+        inicio_dia = ahora.date() - timedelta(days=dias - 1)
+        desde = f"{inicio_dia.isoformat()} 00:00:00"
+        hasta = ahora.strftime(_FORMATO)
+
+        with self._lock:
+            por_tipo = dict(self.con.execute(
+                "SELECT tipo, COUNT(*) FROM eventos "
+                "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                "GROUP BY tipo ORDER BY COUNT(*) DESC",
+                (desde, hasta)).fetchall())
+            por_hora = [0] * 24
+            for hora, n in self.con.execute(
+                    "SELECT CAST(substr(marca_pantalla, 1, 2) AS INTEGER), "
+                    "COUNT(*) FROM eventos "
+                    "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                    "GROUP BY 1", (desde, hasta)):
+                if hora is not None and 0 <= int(hora) < 24:
+                    por_hora[int(hora)] = int(n)
+            por_dia = [{"dia": d, "n": int(n)} for d, n in self.con.execute(
+                "SELECT substr(marca_sistema, 1, 10), COUNT(*) FROM eventos "
+                "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                "GROUP BY 1 ORDER BY 1", (desde, hasta))]
+            personas = int(self.con.execute(
+                "SELECT COUNT(DISTINCT id_tracking) FROM eventos "
+                "WHERE marca_sistema >= ? AND marca_sistema <= ? "
+                "AND id_tracking IS NOT NULL", (desde, hasta)).fetchone()[0])
+            actividades = self.con.execute(
+                "SELECT id_tracking, marca_sistema, detalle FROM eventos "
+                "WHERE tipo = 'actividad' AND marca_sistema >= ? "
+                "AND marca_sistema <= ? ORDER BY id_tracking, id",
+                (desde, hasta)).fetchall()
+            entradas = self.con.execute(
+                "SELECT id_tracking, tipo, marca_sistema FROM eventos "
+                "WHERE tipo IN ('persona_entra', 'persona_salio') "
+                "AND marca_sistema >= ? AND marca_sistema <= ? "
+                "ORDER BY marca_sistema, id", (desde, hasta)).fetchall()
+
+        segundos_actividad: dict[str, float] = {}
+        anterior: dict[int, tuple[datetime, str]] = {}
+        for pid, cuando, detalle in actividades:
+            texto = _actividad_de(detalle)
+            if not texto:
+                continue
+            try:
+                momento = datetime.strptime(cuando, _FORMATO)
+            except (TypeError, ValueError):
+                continue
+            if pid in anterior:
+                t0, act0 = anterior[pid]
+                delta = (momento - t0).total_seconds()
+                if 0 <= delta <= 600:  # >10 min = hueco, no tiempo real
+                    segundos_actividad[act0] = (
+                        segundos_actividad.get(act0, 0.0) + delta)
+            anterior[pid] = (momento, texto)
+        # el tramo abierto de cada persona cuenta hasta ahora, con tope
+        for pid, (t0, act0) in anterior.items():
+            delta = (ahora - t0).total_seconds()
+            if 0 <= delta <= 600:
+                segundos_actividad[act0] = (
+                    segundos_actividad.get(act0, 0.0) + delta)
+
+        ocupacion, ocupacion_max, pico_offset = _ocupacion(
+            entradas, desde, hasta)
+        pico_hora = max(range(24), key=lambda h: por_hora[h])
+        pico_dia = max(por_dia, key=lambda d: d["n"]) if por_dia else None
+        return {
+            "dias": dias,
+            "desde": desde,
+            "hasta": hasta,
+            "total": sum(por_tipo.values()),
+            "por_tipo": por_tipo,
+            "por_hora": por_hora,
+            "por_dia": por_dia,
+            "actividades": {k: round(v, 1)
+                            for k, v in sorted(segundos_actividad.items(),
+                                               key=lambda kv: -kv[1])},
+            "personas_distintas": personas,
+            "ocupacion_media": round(ocupacion, 2),
+            "ocupacion_max": ocupacion_max,
+            "picos": {
+                "hora": {"hora": pico_hora, "n": por_hora[pico_hora]},
+                "dia": pico_dia,
+                "personas": {"n": ocupacion_max, "t_seg": pico_offset},
+            },
+        }
 
     def contar(self) -> int:
         with self._lock:

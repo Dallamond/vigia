@@ -100,12 +100,13 @@ class GuardadorClips:
         return "mp4v", ".mp4"
 
     # -- salida -----------------------------------------------------------
-    def guardar(self, tipo: str) -> Path | None:
+    def guardar(self, tipo: str, camara_id: str | int | None = None
+                ) -> Path | None:
         with self._lock:
             if not self._buf:
                 return None
             copia = list(self._buf)
-        nombre = f"{self._sello(tipo)}{self.formato()[1]}"
+        nombre = f"{self._sello(tipo, camara_id)}{self.formato()[1]}"
         destino = self.carpeta / nombre
         hilo = threading.Thread(target=self._escribir, args=(copia, destino),
                                 daemon=True)
@@ -115,20 +116,28 @@ class GuardadorClips:
         hilo.start()
         return destino
 
-    def _sello(self, tipo: str) -> str:
-        """Nombre unico (segundo + contador) compartido por clips y miniaturas."""
+    def _sello(self, tipo: str, camara_id: str | int | None = None) -> str:
+        """Nombre unico (segundo + contador) compartido por clips y miniaturas.
+
+        Con multicamara se anade `_c<id>` para poder distinguir el origen; la
+        camara clasica ("0") conserva los nombres de siempre.
+        """
         with self._lock:
             self._secuencia += 1
             secuencia = self._secuencia
         base = f"{time.strftime('%Y%m%d_%H%M%S')}_{secuencia:04d}"
-        return f"{base}_{_TIPO_SEGURO.sub('_', tipo)}"
+        sufijo = ""
+        if camara_id is not None and str(camara_id) != "0":
+            sufijo = f"_c{_TIPO_SEGURO.sub('_', str(camara_id))}"
+        return f"{base}_{_TIPO_SEGURO.sub('_', tipo)}{sufijo}"
 
     def guardar_miniatura(self, frame: "np.ndarray | None",
-                          tipo: str) -> Path | None:
+                          tipo: str,
+                          camara_id: str | int | None = None) -> Path | None:
         """Guarda un JPEG del instante del evento (barato, ~20 KB)."""
         if frame is None:
             return None
-        nombre = f"{self._sello(f'{tipo}_min')}.jpg"
+        nombre = f"{self._sello(f'{tipo}_min', camara_id)}.jpg"
         destino = self.carpeta / nombre
         try:
             ok = cv2.imwrite(str(destino), frame, _calidad(75))

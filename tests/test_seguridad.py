@@ -94,7 +94,8 @@ def test_sin_token_solo_localhost(sin_token):
 def test_api_sin_credencial_devuelve_401(con_token):
     r = _cliente().get("/estado")
     assert r.status_code == 401
-    assert r.json() == {"detalle": "no autenticado"}
+    assert r.json()["detalle"] == "no autenticado"
+    assert r.json()["detail"] == "no autenticado"
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"
 
