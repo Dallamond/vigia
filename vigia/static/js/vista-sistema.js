@@ -1,6 +1,7 @@
 /* Vista «Sistema»: salud, cámaras, armado y Telegram.
  * Los endpoint de armado/Telegram pueden no existir todavía (404): se muestra
  * "pendiente" y no se escribe nada raro en la consola. */
+import { api } from './api.js';
 import { $, esc, toast } from './nucleo.js';
 import { pintarSalud } from './vista-vivo.js';
 
@@ -59,6 +60,30 @@ export function iniciarSistema(fuenteDatos, camaras) {
     } catch (e) { pintarTelegram(null); }
   }
 
+  async function cargarLogs() {
+    const caja = $('logBox');
+    if (!caja) return;
+    try {
+      const nivel = $('logNivel')?.value || 'INFO';
+      const d = await api('/logs?limite=150&nivel=' + encodeURIComponent(nivel), { tolerante: true });
+      if (!d) {
+        caja.innerHTML = '<div class="empty">el servidor no expone /logs todavía</div>';
+        return;
+      }
+      const info = $('logInfo');
+      if (info) info.textContent = `${Math.round((d.tamano_bytes || 0) / 1024)} KB · ${d.rotaciones || 0} rot.`;
+      const filas = d.lineas || [];
+      caja.innerHTML = filas.length ? filas.map((l) => `<div class="ll ${esc((l.nivel || '?').toLowerCase())}">
+        <span class="lt">${esc((l.t || '').slice(11, 19))}</span><span class="ln">${esc(l.nivel)}</span>
+        <span class="lm" title="${esc(l.modulo)}">${esc((l.modulo || '').replace(/^vigia./, ''))}</span>
+        <span class="lx">${esc(l.msg)}</span></div>`).join('') : '<div class="empty">sin líneas con ese nivel</div>';
+    } catch (e) {
+      if (e.estado !== 401) caja.innerHTML = `<div class="empty">no se pudo leer el registro: ${esc(e.message)}</div>`;
+    }
+  }
+  $('logNivel')?.addEventListener('change', cargarLogs);
+  $('logRefrescar')?.addEventListener('click', cargarLogs);
+
   async function refrescarTodo() {
     if (!activo) return;
     try {
@@ -66,7 +91,7 @@ export function iniciarSistema(fuenteDatos, camaras) {
       fuenteDatos.salud = salud;
       pintarSalud(salud);
     } catch (e) { /* silencioso */ }
-    await Promise.all([cargarArmado(), cargarTelegram()]);
+    await Promise.all([cargarArmado(), cargarTelegram(), cargarLogs()]);
   }
 
   const armar = $('btnArmar');

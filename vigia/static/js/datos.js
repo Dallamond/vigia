@@ -56,12 +56,33 @@ class FuenteDatos {
       }
     };
     document.addEventListener('visibilitychange', this._visibilidad);
+    this._abrirSSE();
+  }
+
+  /* Canal de eventos en vivo (SSE). Si el servidor no lo tiene o se cae, el
+   * sondeo sigue funcionando igual; esto solo lo adelanta. */
+  _abrirSSE() {
+    if (!('EventSource' in window) || this._sse) return;
+    try {
+      this._sse = new EventSource('/eventos/stream');
+      this._sse.addEventListener('evento', (m) => {
+        let e = null;
+        try { e = JSON.parse(m.data); } catch (err) { return; }
+        this.emitir('evento', e);
+        this.refrescarEstado();
+      });
+      this._sse.onerror = () => {
+        // 404/401: el navegador reintenta sin parar; mejor cerrar y confiar en el sondeo
+        if (this._sse && this._sse.readyState === EventSource.CLOSED) this._sse = null;
+      };
+    } catch (e) { this._sse = null; }
   }
 
   parar() {
     this._activa = false;
     this._temporizadores.forEach(clearInterval);
     this._temporizadores = [];
+    if (this._sse) { this._sse.close(); this._sse = null; }
     if (this._visibilidad) {
       document.removeEventListener('visibilitychange', this._visibilidad);
       this._visibilidad = null;

@@ -46,13 +46,14 @@
       <span class="brand-txt">Vigia<small>vigilancia local</small></span>
     </a>
     <nav class="nav" aria-label="Vistas">
-      <a href="#/vivo" data-nav="vivo" title="En vivo (1)"><svg class="i"><use href="#i-vivo"/></svg><span class="lbl">En vivo</span><kbd>1</kbd></a>
-      <a href="#/eventos" data-nav="eventos" title="Eventos (2)"><svg class="i"><use href="#i-eventos"/></svg><span class="lbl">Eventos</span><kbd>2</kbd></a>
-      <a href="#/clips" data-nav="clips" title="Clips (3)"><svg class="i"><use href="#i-clips"/></svg><span class="lbl">Clips</span><kbd>3</kbd></a>
-      <a href="#/personas" data-nav="personas" title="Personas (4)"><svg class="i"><use href="#i-personas"/></svg><span class="lbl">Personas</span><kbd>4</kbd></a>
-      <a href="#/zonas" data-nav="zonas" title="Zonas y reglas (5)"><svg class="i"><use href="#i-zonas"/></svg><span class="lbl">Zonas y reglas</span><kbd>5</kbd></a>
-      <a href="#/sistema" data-nav="sistema" title="Sistema (6)"><svg class="i"><use href="#i-sistema"/></svg><span class="lbl">Sistema</span><kbd>6</kbd></a>
-      <a href="#/ajustes" data-nav="ajustes" title="Ajustes (7)"><svg class="i"><use href="#i-ajustes"/></svg><span class="lbl">Ajustes</span><kbd>7</kbd></a>
+      <a href="#/resumen" data-nav="resumen" title="Resumen (1)"><svg class="i"><use href="#i-resumen"/></svg><span class="lbl">Resumen</span><kbd>1</kbd></a>
+      <a href="#/vivo" data-nav="vivo" title="En vivo (2)"><svg class="i"><use href="#i-vivo"/></svg><span class="lbl">En vivo</span><kbd>2</kbd></a>
+      <a href="#/eventos" data-nav="eventos" title="Eventos (3)"><svg class="i"><use href="#i-eventos"/></svg><span class="lbl">Eventos</span><kbd>3</kbd></a>
+      <a href="#/clips" data-nav="clips" title="Clips (4)"><svg class="i"><use href="#i-clips"/></svg><span class="lbl">Clips</span><kbd>4</kbd></a>
+      <a href="#/personas" data-nav="personas" title="Personas (5)"><svg class="i"><use href="#i-personas"/></svg><span class="lbl">Personas</span><kbd>5</kbd></a>
+      <a href="#/zonas" data-nav="zonas" title="Zonas y reglas (6)"><svg class="i"><use href="#i-zonas"/></svg><span class="lbl">Zonas y reglas</span><kbd>6</kbd></a>
+      <a href="#/sistema" data-nav="sistema" title="Sistema (7)"><svg class="i"><use href="#i-sistema"/></svg><span class="lbl">Sistema</span><kbd>7</kbd></a>
+      <a href="#/ajustes" data-nav="ajustes" title="Ajustes (8)"><svg class="i"><use href="#i-ajustes"/></svg><span class="lbl">Ajustes</span><kbd>8</kbd></a>
     </nav>
     <div class="side-foot">
       <span class="dot" id="dotCam" aria-hidden="true"></span>
@@ -89,6 +90,49 @@
     </div>
 
     <main id="contenido">
+
+<!-- ============ RESUMEN ============ -->
+<section class="vista" data-vista="resumen" hidden>
+  <div class="kpi-grid" id="resKpis"><div class="empty">cargando…</div></div>
+  <div class="res-grid">
+    <section class="card span2">
+      <div class="card-head">
+        <h2>Actividad por hora</h2>
+        <div class="seg derecha" id="resRango" role="group" aria-label="Periodo">
+          <button data-d="1" aria-pressed="false">Hoy</button>
+          <button data-d="7" class="on" aria-pressed="true">7 días</button>
+          <button data-d="30" aria-pressed="false">30 días</button>
+        </div>
+        <button class="btn icon sm ghost" id="resRefrescar" title="Actualizar" aria-label="Actualizar"><svg class="i"><use href="#i-refrescar"/></svg></button>
+      </div>
+      <div class="pad" id="resHoras"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Último evento</h2></div>
+      <div class="pad" id="resUltimo"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Por tipo</h2></div>
+      <div class="pad" id="resTipos"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Tiempo por actividad</h2></div>
+      <div class="pad" id="resActividad"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Eventos por día</h2></div>
+      <div class="pad" id="resDias"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Hoy por tipo</h2></div>
+      <div class="pad" id="resPorTipoHoy"><div class="empty">cargando…</div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Resumen del periodo</h2></div>
+      <div class="pad" id="resPicos"><div class="empty">cargando…</div></div>
+    </section>
+  </div>
+</section>
 
 <!-- ============ EN VIVO ============ -->
 <section class="vista" data-vista="vivo" hidden>
@@ -321,14 +365,15 @@
       </section>
 
       <section class="card">
-        <div class="card-head"><h2>Registro del servidor</h2></div>
-        <div class="pad">
-          <div id="logsAviso" class="hint">
-            Pendiente: el backend todavía no expone un endpoint de logs
-            (<code>/logs</code>). Se ha pedido en <code>docs/prompts/NOTAS.md</code>;
-            mientras tanto, el log está en <code>logs/vigia.log</code>.
-          </div>
+        <div class="card-head">
+          <h2>Registro del servidor</h2>
+          <span class="chip" id="logInfo">–</span>
+          <select class="btn sm sel derecha" id="logNivel" aria-label="Nivel mínimo">
+            <option value="INFO">INFO+</option><option value="WARNING">WARNING+</option><option value="ERROR">ERROR</option><option value="DEBUG">todo</option>
+          </select>
+          <button class="btn icon sm ghost" id="logRefrescar" title="Actualizar" aria-label="Actualizar registro"><svg class="i"><use href="#i-refrescar"/></svg></button>
         </div>
+        <div class="logbox" id="logBox"><div class="empty">cargando…</div></div>
       </section>
     </div>
 
@@ -539,7 +584,7 @@
     <div class="mh"><h3 id="ayTitulo">Atajos de teclado</h3><button class="x" data-close="mAyuda" aria-label="Cerrar">×</button></div>
     <div class="mb">
       <dl class="kv">
-        <dt>1 … 7</dt><dd>En vivo, Eventos, Clips, Personas, Zonas, Sistema, Ajustes</dd>
+        <dt>1 … 8</dt><dd>Resumen, En vivo, Eventos, Clips, Personas, Zonas, Sistema, Ajustes</dd>
         <dt>g</dt><dd>Ir a una vista (pulsa g y luego el número)</dd>
         <dt>r</dt><dd>Recargar la vista actual</dd>
         <dt>t</dt><dd>Cambiar tema (auto / claro / oscuro)</dd>

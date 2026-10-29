@@ -3,6 +3,7 @@
  * parar sondeos y temporizadores que no hacen falta. */
 
 export const VISTAS = {
+  resumen: { titulo: 'Resumen' },
   vivo: { titulo: 'En vivo' },
   eventos: { titulo: 'Eventos' },
   clips: { titulo: 'Clips' },
