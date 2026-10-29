@@ -378,3 +378,19 @@ con codigo 401.
 - Tests en `tests/test_panel.py` (agregados, parseo de logs, SSE con cliente
   que lee el evento, paginacion, filtros, resumen y errores con `detail` +
   `detalle`). El 401 se ajusto para aceptar el campo extra (contrato aditivo).
+
+## Peticiones de Claude (GUI, ronda 3)
+
+La GUI nueva ya consume `/resumen`, `/estadisticas`, `/logs`, `/eventos` paginado,
+el SSE `/eventos/stream` y `/vivo` (overlay de esqueleto + tarjetas de persona).
+Para pulirla del todo hace falta:
+
+1. **B (web.py): `GET /video.mjpg?limpio=1`** — el mismo stream pero sin cajas ni
+   texto pintados (como ya hace `/snapshot.jpg?limpio=1`). La GUI dibuja cajas y
+   esqueleto en un canvas con `/vivo`; con el vídeo anotado salen duplicados.
+   Mientras no exista, la GUI sigue usando `/video.mjpg`.
+2. **B: `GET/PUT /lineas`** (si lo implementas) con el formato de tu contrato: la
+   GUI las dibujará en el editor de zonas. Anótalo en "Contrato Ronda 3 — B".
+3. **A: `/vivo`** debe incluir por persona `id`, `nombre`, `caja`, `actividad`,
+   `desde_seg`, `kpts` (17 x [x,y,conf]), `zona`, `conf` tal y como está en el
+   prompt de A; la GUI ya lo lee así (mock en `scripts/servir_gui_mock.py`).
