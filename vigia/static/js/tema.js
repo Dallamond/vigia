@@ -1,7 +1,7 @@
 /* Tema: auto (prefers-color-scheme), claro u oscuro. Se recuerda en localStorage. */
 const CLAVE = 'vigia.tema';
 const ORDEN = ['auto', 'claro', 'oscuro'];
-const ICONO = { auto: '◐', claro: '☀', oscuro: '☾' };
+const ICONO = { auto: 'i-auto', claro: 'i-sol', oscuro: 'i-luna' };
 const NOMBRE = { auto: 'tema automático', claro: 'tema claro', oscuro: 'tema oscuro' };
 
 function aplicar(tema) {
@@ -9,7 +9,7 @@ function aplicar(tema) {
   document.documentElement.dataset.tema = valor;
   const boton = document.getElementById('btnTema');
   if (boton) {
-    boton.textContent = ICONO[valor];
+    boton.innerHTML = `<svg class="i"><use href="#${ICONO[valor]}"/></svg>`;
     boton.title = `${NOMBRE[valor]} (t)`;
     boton.setAttribute('aria-label', `Cambiar tema; ahora ${NOMBRE[valor]}`);
   }

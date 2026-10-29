@@ -51,6 +51,8 @@ function pintar(vista) {
     else a.removeAttribute('aria-current');
   });
   document.title = `Vigia — ${VISTAS[vista].titulo}`;
+  const titulo = document.getElementById('tituloVista');
+  if (titulo) titulo.textContent = VISTAS[vista].titulo;
 }
 
 function aplicar() {

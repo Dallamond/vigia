@@ -5,102 +5,147 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>Vigia — vigilancia local</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234ade80'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%230b0f14'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/panel.css">
 <script type="module" src="/static/js/main.js"></script>
 </head>
 <body>
 <a class="salto" href="#contenido">Saltar al contenido</a>
 
-<header class="top">
-  <div class="brand">Vigia <span class="sub">vigilancia local</span></div>
-  <nav class="nav" aria-label="Vistas">
-    <a href="#/vivo" data-nav="vivo"><span class="ico" aria-hidden="true">◉</span>En vivo</a>
-    <a href="#/eventos" data-nav="eventos"><span class="ico" aria-hidden="true">☰</span>Eventos</a>
-    <a href="#/clips" data-nav="clips"><span class="ico" aria-hidden="true">▶</span>Clips</a>
-    <a href="#/personas" data-nav="personas"><span class="ico" aria-hidden="true">☺</span>Personas</a>
-    <a href="#/zonas" data-nav="zonas"><span class="ico" aria-hidden="true">◫</span>Zonas y reglas</a>
-    <a href="#/sistema" data-nav="sistema"><span class="ico" aria-hidden="true">⚙</span>Sistema</a>
-    <a href="#/ajustes" data-nav="ajustes"><span class="ico" aria-hidden="true">⚒</span>Ajustes</a>
-  </nav>
-  <div class="actions">
-    <div class="pills" aria-live="off">
-      <span class="pill"><span class="dot" id="dotCam" aria-hidden="true"></span>cámara</span>
-      <span class="pill">FPS <b id="pFps">–</b></span>
-      <span class="pill">personas <b id="pPer">0</b></span>
-      <span class="pill">objetos <b id="pObj">0</b></span>
-      <span class="pill" id="pRes">–</span>
+<!-- Iconos (estilo trazo, 24x24). Se usan con <svg class="i"><use href="#i-..."/></svg> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></symbol>
+    <symbol id="i-vivo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/></symbol>
+    <symbol id="i-eventos" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4.5" cy="6" r=".6" fill="currentColor"/><circle cx="4.5" cy="12" r=".6" fill="currentColor"/><circle cx="4.5" cy="18" r=".6" fill="currentColor"/></symbol>
+    <symbol id="i-clips" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M10 9.2v5.6l4.6-2.8z"/></symbol>
+    <symbol id="i-personas" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.6"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.6 3.6 0 0 1 0 6.8M18 14.8c2 .7 3.2 2.5 3.5 5.2"/></symbol>
+    <symbol id="i-zonas" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16.5L12 21l9-4.5"/></symbol>
+    <symbol id="i-sistema" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-7 5 14 2.5-7h4"/></symbol>
+    <symbol id="i-ajustes" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-resumen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="9" rx="2"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="2"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="2"/><rect x="3" y="15" width="7.5" height="6" rx="2"/></symbol>
+    <symbol id="i-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6L6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></symbol>
+    <symbol id="i-luna" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 13.5A8.5 8.5 0 1 1 10.5 3.5a6.7 6.7 0 0 0 10 10z"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></symbol>
+    <symbol id="i-ayuda" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></symbol>
+    <symbol id="i-salir" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3M16 8l4 4-4 4M20 12H9"/></symbol>
+    <symbol id="i-pantalla" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3.5H5.5a2 2 0 0 0-2 2V8M16 3.5h2.5a2 2 0 0 1 2 2V8M8 20.5H5.5a2 2 0 0 1-2-2V16M16 20.5h2.5a2 2 0 0 0 2-2V16"/></symbol>
+    <symbol id="i-refrescar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
+    <symbol id="i-izq" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6l-6 6 6 6"/></symbol>
+    <symbol id="i-der" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6l6 6-6 6"/></symbol>
+    <symbol id="i-mas" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- ============ barra lateral ============ -->
+  <aside class="side">
+    <a class="brand" href="#/vivo" aria-label="Vigia, inicio">
+      <span class="brand-logo"><svg class="i"><use href="#i-logo"/></svg></span>
+      <span class="brand-txt">Vigia<small>vigilancia local</small></span>
+    </a>
+    <nav class="nav" aria-label="Vistas">
+      <a href="#/vivo" data-nav="vivo" title="En vivo (1)"><svg class="i"><use href="#i-vivo"/></svg><span class="lbl">En vivo</span><kbd>1</kbd></a>
+      <a href="#/eventos" data-nav="eventos" title="Eventos (2)"><svg class="i"><use href="#i-eventos"/></svg><span class="lbl">Eventos</span><kbd>2</kbd></a>
+      <a href="#/clips" data-nav="clips" title="Clips (3)"><svg class="i"><use href="#i-clips"/></svg><span class="lbl">Clips</span><kbd>3</kbd></a>
+      <a href="#/personas" data-nav="personas" title="Personas (4)"><svg class="i"><use href="#i-personas"/></svg><span class="lbl">Personas</span><kbd>4</kbd></a>
+      <a href="#/zonas" data-nav="zonas" title="Zonas y reglas (5)"><svg class="i"><use href="#i-zonas"/></svg><span class="lbl">Zonas y reglas</span><kbd>5</kbd></a>
+      <a href="#/sistema" data-nav="sistema" title="Sistema (6)"><svg class="i"><use href="#i-sistema"/></svg><span class="lbl">Sistema</span><kbd>6</kbd></a>
+      <a href="#/ajustes" data-nav="ajustes" title="Ajustes (7)"><svg class="i"><use href="#i-ajustes"/></svg><span class="lbl">Ajustes</span><kbd>7</kbd></a>
+    </nav>
+    <div class="side-foot">
+      <span class="dot" id="dotCam" aria-hidden="true"></span>
+      <span class="lbl" id="sideEstado">cámara</span>
+      <span class="lbl ver" id="sideVersion"></span>
     </div>
-    <select class="btn" id="selCam" title="Cámara principal" aria-label="Cámara principal"></select>
-    <button class="btn icono" id="btnTema" title="Cambiar tema (t)" aria-label="Cambiar tema">◐</button>
-    <button class="btn sm" id="btnAyuda" title="Atajos de teclado (?)" aria-label="Ayuda y atajos">?</button>
-    <button class="btn sm ghost" id="btnSalir" hidden title="Cerrar sesión">Salir</button>
-  </div>
-</header>
+  </aside>
 
-<div class="aviso" id="avisoHttp" role="status" hidden>
-  <span id="avisoHttpTxt"></span>
-  <button class="x" data-cerrar-aviso="avisoHttp" aria-label="Cerrar aviso">×</button>
-</div>
-<div class="aviso bad" id="avisoError" role="alert" hidden>
-  <span id="avisoErrorTxt"></span>
-  <button class="x" data-cerrar-aviso="avisoError" aria-label="Cerrar aviso">×</button>
-</div>
+  <div class="shell">
 
-<main id="contenido">
+    <!-- ============ cabecera ============ -->
+    <header class="top">
+      <h1 id="tituloVista">En vivo</h1>
+      <span class="crece"></span>
+      <div class="pills" aria-live="off">
+        <span class="pill" title="Fotogramas por segundo del análisis">FPS <b id="pFps">–</b></span>
+        <span class="pill" title="Personas detectadas ahora"><svg class="i s"><use href="#i-personas"/></svg><b id="pPer">0</b></span>
+        <span class="pill" title="Objetos detectados ahora">objetos <b id="pObj">0</b></span>
+        <span class="pill" id="pRes" title="Resolución de captura">–</span>
+      </div>
+      <select class="btn sel" id="selCam" title="Cámara principal" aria-label="Cámara principal"></select>
+      <button class="btn icon ghost" id="btnTema" title="Cambiar tema (t)" aria-label="Cambiar tema"><svg class="i"><use href="#i-auto"/></svg></button>
+      <button class="btn icon ghost" id="btnAyuda" title="Atajos de teclado (?)" aria-label="Ayuda y atajos"><svg class="i"><use href="#i-ayuda"/></svg></button>
+      <button class="btn icon ghost" id="btnSalir" hidden title="Cerrar sesión" aria-label="Cerrar sesión"><svg class="i"><use href="#i-salir"/></svg></button>
+    </header>
+
+    <div class="aviso" id="avisoHttp" role="status" hidden>
+      <span id="avisoHttpTxt"></span>
+      <button class="x" data-cerrar-aviso="avisoHttp" aria-label="Cerrar aviso">×</button>
+    </div>
+    <div class="aviso bad" id="avisoError" role="alert" hidden>
+      <span id="avisoErrorTxt"></span>
+      <button class="x" data-cerrar-aviso="avisoError" aria-label="Cerrar aviso">×</button>
+    </div>
+
+    <main id="contenido">
 
 <!-- ============ EN VIVO ============ -->
 <section class="vista" data-vista="vivo" hidden>
   <div class="layout">
     <section class="card video-card" aria-label="Vídeo en vivo">
-      <div class="video-toolbar">
-        <div class="seg" id="segSize" role="group" aria-label="Tamaño del vídeo">
-          <button data-s="s" aria-pressed="false">S</button>
-          <button data-s="m" class="on" aria-pressed="true">M</button>
-          <button data-s="l" aria-pressed="false">L</button>
-          <button data-s="xl" aria-pressed="false">XL</button>
-          <button data-s="fit" aria-pressed="false">Ancho</button>
-        </div>
-        <button class="btn sm ghost" id="btnFull" title="Pantalla completa (f)" aria-label="Pantalla completa">⛶</button>
-        <span class="hint">tamaño del vídeo · <span id="vivoCamNombre">cámara principal</span></span>
-      </div>
       <div class="stage" id="stage">
         <img id="video" alt="Cámara en vivo" crossorigin="use-credentials">
-        <div class="offline-tag">CÁMARA NO DISPONIBLE</div>
+        <canvas id="overlay" aria-hidden="true"></canvas>
+        <div class="stage-bar">
+          <span class="live-tag"><i></i>EN VIVO</span>
+          <span class="stage-cam" id="vivoCamNombre">cámara principal</span>
+          <span class="crece"></span>
+          <label class="tog" title="Superponer esqueleto y cajas"><input type="checkbox" id="ovToggle" checked><span>Análisis</span></label>
+          <div class="seg" id="segSize" role="group" aria-label="Tamaño del vídeo">
+            <button data-s="s" aria-pressed="false">S</button>
+            <button data-s="m" aria-pressed="false">M</button>
+            <button data-s="l" aria-pressed="false">L</button>
+            <button data-s="xl" aria-pressed="false">XL</button>
+            <button data-s="fit" class="on" aria-pressed="true">Ancho</button>
+          </div>
+          <button class="btn icon sm" id="btnFull" title="Pantalla completa (f)" aria-label="Pantalla completa"><svg class="i"><use href="#i-pantalla"/></svg></button>
+        </div>
+        <div class="offline-tag">Cámara no disponible</div>
       </div>
       <div class="health" id="salud"><span>salud: …</span></div>
     </section>
 
     <aside class="col">
       <section class="card">
-        <div class="card-head"><h2>Actividad</h2><span class="chip" id="actCount">0</span></div>
-        <div class="feed" id="feed"><div class="empty">sin eventos todavía</div></div>
-      </section>
-      <section class="card">
         <div class="card-head"><h2>Personas ahora</h2><span class="chip" id="pPersChip">0</span></div>
         <div class="acts" id="acts"><div class="empty">sin personas</div></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Actividad reciente</h2><span class="chip" id="actCount">0</span></div>
+        <div class="feed" id="feed"><div class="empty">sin eventos todavía</div></div>
       </section>
     </aside>
   </div>
 
   <!-- Línea del tiempo (ancho completo) -->
-  <section class="card" id="tlcard" style="margin-top:16px" aria-label="Línea del tiempo">
+  <section class="card sep" id="tlcard" aria-label="Línea del tiempo">
     <div class="tl-head">
       <h2>Línea del tiempo</h2>
       <span class="live" id="tlLive"><i></i><span id="tlLiveTxt">EN DIRECTO</span></span>
-      <span class="chip" id="tlAhora" style="margin-left:0">–</span>
+      <span class="chip plano" id="tlAhora">–</span>
       <span class="crece"></span>
-      <button class="btn sm ghost" id="tlAtras" title="Desplazar hacia atrás" aria-label="Desplazar hacia atrás">◀</button>
+      <button class="btn icon sm ghost" id="tlAtras" title="Desplazar hacia atrás" aria-label="Desplazar hacia atrás"><svg class="i"><use href="#i-izq"/></svg></button>
       <div class="seg" id="tlRango" role="group" aria-label="Rango de la línea del tiempo">
         <button data-h="1" aria-pressed="false">1 h</button>
         <button data-h="6" class="on" aria-pressed="true">6 h</button>
         <button data-h="24" aria-pressed="false">24 h</button>
       </div>
-      <button class="btn sm ghost" id="tlAdelante" title="Desplazar hacia delante" aria-label="Desplazar hacia delante">▶</button>
+      <button class="btn icon sm ghost" id="tlAdelante" title="Desplazar hacia delante" aria-label="Desplazar hacia delante"><svg class="i"><use href="#i-der"/></svg></button>
       <button class="btn sm" id="tlAhoraBtn" title="Volver al directo">Ahora</button>
-      <input id="tdia" type="date" title="Ver un día completo" aria-label="Ver un día completo">
-      <select id="tlCamara" class="btn sm" hidden aria-label="Filtrar por cámara"></select>
-      <span class="chip" id="tlTotal">0 eventos</span>
+      <input id="tdia" class="date" type="date" title="Ver un día completo" aria-label="Ver un día completo">
+      <select id="tlCamara" class="btn sm sel" hidden aria-label="Filtrar por cámara"></select>
+      <span class="chip plano" id="tlTotal">0 eventos</span>
     </div>
     <div class="tl2">
       <div class="labels" aria-hidden="true">
@@ -127,10 +172,10 @@
       <h2>Historial de eventos</h2>
       <span class="chip" id="evTotal">0 eventos</span>
     </div>
-    <div style="padding:12px 14px">
+    <div class="pad">
       <div class="filters">
         <label class="sr" for="ftipo">Tipo</label>
-        <select id="ftipo">
+        <select id="ftipo" class="btn sel">
           <option value="">todos los tipos</option>
           <option>persona_entra</option><option>persona_salio</option>
           <option>permanencia</option><option>actividad</option>
@@ -141,12 +186,12 @@
           <option>persona_inmovil</option>
         </select>
         <label class="sr" for="fdesde">Desde</label>
-        <input id="fdesde" type="date" title="Desde">
+        <input id="fdesde" class="date" type="date" title="Desde">
         <label class="sr" for="flimite">Límite</label>
-        <select id="flimite" title="Número de eventos">
+        <select id="flimite" class="btn sel" title="Número de eventos">
           <option>15</option><option selected>50</option><option>100</option><option>300</option><option>500</option>
         </select>
-        <button class="btn sm" id="btnRefrescar">↻ Actualizar</button>
+        <button class="btn sm" id="btnRefrescar"><svg class="i s"><use href="#i-refrescar"/></svg>Actualizar</button>
         <span class="crece"></span>
         <span class="hint" id="evAviso"></span>
       </div>
@@ -161,10 +206,10 @@
     <div class="card-head">
       <h2>Clips guardados</h2>
       <span class="chip" id="clipsTotal">0</span>
-      <button class="btn sm derecha" id="btnRefrescarClips">↻ Actualizar</button>
+      <button class="btn sm derecha" id="btnRefrescarClips"><svg class="i s"><use href="#i-refrescar"/></svg>Actualizar</button>
     </div>
-    <div style="padding:12px 14px">
-      <p class="hint" style="margin-top:0">Clips WebM generados al dispararse un evento. Se podan según la retención de Ajustes.</p>
+    <div class="pad">
+      <p class="hint lead">Clips WebM generados al dispararse un evento. Se podan según la retención de Ajustes.</p>
       <div class="rows" id="clipList"><div class="empty">cargando…</div></div>
     </div>
   </section>
@@ -175,8 +220,8 @@
   <div class="layout">
     <section class="card">
       <div class="card-head"><h2>Personas conocidas</h2><span class="chip" id="carasCount">0</span></div>
-      <div style="padding:12px 14px">
-        <p class="hint" style="margin-top:0">
+      <div class="pad">
+        <p class="hint lead">
           Colócate frente a la cámara y registra tu cara. Puedes añadir varias
           muestras con el mismo nombre (de frente, con gafas…) para reconocer
           mejor. Todo se queda en este PC: los embeddings no salen de aquí.
@@ -184,11 +229,11 @@
         <div id="cAviso" class="msg"></div>
         <div class="reg">
           <img class="carita" id="cImg" alt="Cara detectada ahora" hidden>
-          <div style="flex:1;min-width:190px">
+          <div class="reg-form">
             <label class="sr" for="cNombre">Nombre</label>
             <input class="field" id="cNombre" placeholder="Nombre" maxlength="60" autocomplete="off">
-            <div class="hint" id="cEstado" style="margin:6px 0 0">buscando una cara…</div>
-            <div class="pila" style="margin-top:8px">
+            <div class="hint" id="cEstado">buscando una cara…</div>
+            <div class="pila">
               <button class="btn primary" id="cRegistrar" disabled>Registrar cara visible</button>
             </div>
           </div>
@@ -212,29 +257,29 @@
 
 <!-- ============ ZONAS Y REGLAS ============ -->
 <section class="vista" data-vista="zonas" hidden>
-  <div class="aviso" id="zAviso" role="status" hidden>
+  <div class="aviso flat" id="zAviso" role="status" hidden>
     <span id="zAvisoTxt"></span>
   </div>
-  <div class="zonas-layout" style="margin-top:12px">
+  <div class="zonas-layout">
     <section class="card">
       <div class="card-head">
         <h2>Editor de zonas</h2>
         <span class="chip" id="zDims">–</span>
       </div>
-      <div style="padding:12px 14px">
-        <div class="pila" style="margin-bottom:8px">
+      <div class="pad">
+        <div class="pila bajo">
           <div class="seg" id="zModo" role="group" aria-label="Modo de dibujo">
             <button data-modo="caja" class="on" aria-pressed="true">Caja</button>
             <button data-modo="poligono" aria-pressed="false">Polígono</button>
             <button data-modo="excluir" aria-pressed="false">Exclusión</button>
           </div>
           <button class="btn sm ghost" id="zDeshacer" title="Quitar el último punto del polígono">Deshacer punto</button>
-          <button class="btn sm ghost" id="zCaptura">↻ Nueva captura</button>
+          <button class="btn sm ghost" id="zCaptura"><svg class="i s"><use href="#i-refrescar"/></svg>Nueva captura</button>
         </div>
         <div class="zonas-canvas-wrap">
           <canvas id="zCanvas" width="640" height="480" role="img" aria-label="Captura para dibujar zonas"></canvas>
         </div>
-        <p class="hint" id="zAyuda" style="margin:8px 0 0">
+        <p class="hint" id="zAyuda">
           Arrastra para dibujar una caja. En modo polígono, haz clic en cada
           vértice y cierra con doble clic o Intro. Las zonas se aplican en
           caliente.
@@ -248,8 +293,8 @@
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Zonas y sus reglas</h2><button class="btn sm derecha" id="zGuardar">Guardar zonas</button></div>
-      <div style="padding:12px 14px">
+      <div class="card-head"><h2>Zonas y sus reglas</h2><button class="btn sm primary derecha" id="zGuardar">Guardar zonas</button></div>
+      <div class="pad">
         <div class="zlist" id="zList"></div>
       </div>
     </section>
@@ -266,9 +311,9 @@
       </section>
 
       <section class="card">
-        <div class="card-head"><h2>Cámaras</h2><button class="btn sm derecha" id="camRefrescar">↻ Buscar</button></div>
+        <div class="card-head"><h2>Cámaras</h2><button class="btn sm derecha" id="camRefrescar"><svg class="i s"><use href="#i-refrescar"/></svg>Buscar</button></div>
         <div class="cam-grid" id="camGrid"><div class="empty">cargando…</div></div>
-        <p class="hint" style="padding:0 14px 12px;margin:0">
+        <p class="hint foot">
           Multicámara en preparación: la línea del tiempo ya acepta
           <code>camara_id</code> y solo muestra el filtro cuando el backend lo
           devuelve.
@@ -277,7 +322,7 @@
 
       <section class="card">
         <div class="card-head"><h2>Registro del servidor</h2></div>
-        <div style="padding:12px 14px">
+        <div class="pad">
           <div id="logsAviso" class="hint">
             Pendiente: el backend todavía no expone un endpoint de logs
             (<code>/logs</code>). Se ha pedido en <code>docs/prompts/NOTAS.md</code>;
@@ -293,7 +338,7 @@
         <div class="estado-linea">
           <span class="dot" id="dotArmado" aria-hidden="true"></span>
           <span id="armadoTxt">sin datos</span>
-          <button class="btn sm derecha" id="btnArmar">Armar</button>
+          <button class="btn sm primary derecha" id="btnArmar">Armar</button>
           <button class="btn sm ghost" id="btnDesarmar">Desarmar</button>
         </div>
         <div class="estado-linea" id="armadoPendiente" hidden>
@@ -309,7 +354,7 @@
         </div>
         <div class="estado-linea">
           <button class="btn sm" id="btnTelegramPrueba">Enviar prueba</button>
-          <span class="hint" id="telegramMsg" style="margin-left:auto"></span>
+          <span class="hint derecha" id="telegramMsg"></span>
         </div>
         <div class="estado-linea" id="telegramPendiente" hidden>
           <span class="hint">Pendiente de la terminal A (<code>/telegram/*</code>).</span>
@@ -328,7 +373,7 @@
 </section>
 
 <!-- ============ AJUSTES ============ -->
-<section class="vista" data-vista="ajustes" hidden>
+<section class="vista estrecha" data-vista="ajustes" hidden>
   <form id="formAjustes" novalidate>
     <div class="grupo">
       <h3>Cámara y captura</h3>
@@ -368,7 +413,7 @@
       </div>
       <label class="f" for="a_vigiladas">Clases de objeto vigiladas</label>
       <input class="field" id="a_vigiladas" placeholder="laptop, backpack, cell phone">
-      <div class="grid2" style="margin-top:8px">
+      <div class="grid2 sepm">
         <label class="check"><input type="checkbox" id="a_actividades"> detectar actividades (pose)</label>
         <label class="check"><input type="checkbox" id="a_caras"> reconocer caras</label>
       </div>
@@ -379,7 +424,7 @@
       <p>Fuera de estas franjas no se generan eventos. Sin franjas, siempre activo. Las franjas que cruzan medianoche (22:00 → 08:00) se admiten.</p>
       <div class="franjas-barra" id="franjasBarra" aria-hidden="true"></div>
       <div id="franjasEditor"></div>
-      <button type="button" class="btn sm" id="btnAnadirFranja">+ Añadir franja</button>
+      <button type="button" class="btn sm" id="btnAnadirFranja"><svg class="i s"><use href="#i-mas"/></svg>Añadir franja</button>
     </div>
 
     <div class="grupo">
@@ -391,7 +436,7 @@
         <label class="check"><input type="checkbox" id="a_notificar"> avisos de Windows</label>
         <label class="check"><input type="checkbox" id="a_telegram"> avisos por Telegram</label>
       </div>
-      <div class="grid3" style="margin-top:8px">
+      <div class="grid3 sepm">
         <div>
           <label class="f" for="a_telegram_max">Máx. mensajes por hora</label>
           <input class="field" id="a_telegram_max" type="number" min="0" step="1">
@@ -474,7 +519,9 @@
   </form>
 </section>
 
-</main>
+    </main>
+  </div>
+</div>
 
 <div id="tip" role="tooltip"></div>
 
@@ -508,13 +555,14 @@
 <!-- Login -->
 <div class="login" id="login" hidden>
   <form class="caja" id="loginForm">
+    <div class="login-logo"><svg class="i"><use href="#i-logo"/></svg></div>
     <h1>Vigia</h1>
     <p>Esta instalación pide un token de acceso. Se guarda en una cookie de sesión de este navegador.</p>
     <label class="f" for="loginToken">Token de acceso</label>
     <input class="field" id="loginToken" type="password" autocomplete="current-password" required>
     <div class="msg err" id="loginError" role="alert"></div>
-    <button class="btn primary" type="submit" style="width:100%;margin-top:6px" id="loginBtn">Entrar</button>
-    <p class="ayuda" style="margin:14px 0 0">Se configura con <code>VIGIA_TOKEN</code> en el entorno o en <code>.env</code>.</p>
+    <button class="btn primary block" type="submit" id="loginBtn">Entrar</button>
+    <p class="ayuda foot">Se configura con <code>VIGIA_TOKEN</code> en el entorno o en <code>.env</code>.</p>
   </form>
 </div>
 

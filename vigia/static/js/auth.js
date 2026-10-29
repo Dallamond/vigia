@@ -9,7 +9,7 @@ export const auth = {
   revisada: false,
 };
 
-const LOCAL = /^(localhost|127\.|\[::1\]|::1|.*\.local)$/i;
+const LOCAL = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|::1|.*\.local)$/i;
 
 export async function consultarAuth() {
   try {

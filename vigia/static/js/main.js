@@ -8,6 +8,7 @@ import { Timeline } from './timeline.js';
 import { Camaras } from './camaras.js';
 import { EditorZonas } from './zonas.js';
 import { iniciarVivo } from './vista-vivo.js';
+import { Overlay } from './overlay.js';
 import { iniciarEventos } from './vista-eventos.js';
 import { iniciarClips } from './vista-clips.js';
 import { iniciarPersonas } from './vista-personas.js';
@@ -29,6 +30,12 @@ function cabecera() {
     if (obj) obj.textContent = estado.objetos ?? 0;
     if (res && estado.ancho) res.textContent = `${estado.ancho}×${estado.alto}`;
     if (dot) dot.className = 'dot ' + (estado.camara_ok ? 'ok' : 'bad');
+    const lado = $('sideEstado');
+    if (lado) lado.textContent = estado.camara_ok ? 'cámara activa' : 'cámara caída';
+  });
+  datos.al('salud', (s) => {
+    const v = $('sideVersion');
+    if (v && s && s.version) v.textContent = 'v' + s.version;
   });
   datos.al('error', (e) => {
     aviso('avisoError', `Sin conexión con el servidor: ${e.message}. Se reintenta solo.`, 'bad');
@@ -97,6 +104,7 @@ async function arrancar() {
   const timeline = new Timeline(datos);
   const camaras = new Camaras(datos);
   const zonasEditor = new EditorZonas(datos);
+  const overlay = new Overlay();
 
   const vs = {
     vivo: iniciarVivo(datos),
@@ -109,8 +117,8 @@ async function arrancar() {
     zonasEditor,
   };
 
-  alEntrarVista('vivo', () => { timeline.activar(); vs.vivo.entrar(); });
-  alSalirVista('vivo', () => { timeline.desactivar(); vs.vivo.salir(); });
+  alEntrarVista('vivo', () => { timeline.activar(); vs.vivo.entrar(); overlay.activar(); });
+  alSalirVista('vivo', () => { timeline.desactivar(); vs.vivo.salir(); overlay.desactivar(); });
   alEntrarVista('eventos', (params) => vs.eventos.entrar(params));
   alSalirVista('eventos', () => vs.eventos.salir());
   alEntrarVista('clips', () => vs.clips.entrar());
@@ -154,9 +162,6 @@ async function arrancar() {
   } else {
     entrarPanel();
   }
-
-  // Los enlaces de la marca llevan al inicio del panel.
-  document.querySelector('.brand')?.addEventListener('click', () => { location.hash = '#/vivo'; });
 }
 
 arrancar();

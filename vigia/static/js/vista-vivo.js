@@ -10,7 +10,9 @@ const TAMANOS = {
 };
 
 export function iniciarVivo(fuenteDatos) {
-  aplicarTamano(localStorage.getItem('vigia.video') || 'm');
+  let guardado = null;
+  try { guardado = localStorage.getItem('vigia.video'); } catch (e) { /* modo privado */ }
+  aplicarTamano(guardado || 'fit');
 
   document.querySelectorAll('#segSize button').forEach((b) => {
     b.addEventListener('click', () => aplicarTamano(b.dataset.s));
