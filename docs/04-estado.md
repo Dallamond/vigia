@@ -1,7 +1,7 @@
 # Vigia — Estado del Proyecto
 
-> fecha_actualizacion: 2026-10-28
-> estado_general: fases_1-8_hechas · plan_v2_bloques_1-4-6-10_hechos · pendiente_camaras_ip
+> fecha_actualizacion: 2026-10-29
+> estado_general: fases_1-8_hechas · plan_v2_hecho_salvo_camaras_ip · ronda3_gui_v3_y_percepcion_integradas
 > area: proyecto
 > agente: Alfred (día a día), Atlas (estructura)
 > tags:
@@ -37,6 +37,9 @@
 | v2-4 — Reglas por zona | hecha, solo con tests | permanencia por zona, conocidos, restringida, aforo, merodeo, inmovilidad |
 | v2-6 — Despliegue | escrito, sin probar | Docker CUDA, compose, systemd/NSSM, Caddy, backup (Docker no instalado aquí) |
 | v2-10 — GPUs | medido (RTX 3060) | `docs/08-gpus.md`; VLM sin medir (Ollama/LM Studio apagados) |
+| Ronda 3 — GUI v3 (29/10) | hecha | barra lateral, tokens light-dark, vista Resumen, overlay de esqueleto sobre el vídeo (/vivo), tarjetas de persona, galería de clips, eventos paginados, logs, SSE, líneas de cruce en el editor |
+| Ronda 3 — percepción | integrada, sin validar con cámara | pose suavizada (One-Euro), actividad por geometría normalizada, caídas, reasociación por apariencia, banco `eval/` |
+| Ronda 3 — eventos | integrada | /resumen /estadisticas /logs /eventos/stream, líneas de cruce, zona_entra/zona_sale, reglas de zona fuera de franja |
 | Pulido 28/10 | hecho | caras (cajas YuNet), IDs estables, actividad con votación, FPS 11→~22 (pose/caras y cámara en hilos), 960x540 |
 
 ## Registro de cambios
@@ -63,6 +66,8 @@
 | 2026-10-28 | **B3 GPUs medida**: `bench/inventario.py` (torch + `nvidia-smi`), `bench/benchmark.py` (YOLO11 n/s/m y pose con clip real y frames sintéticos, `imgsz`/lote/`--track` configurables, FPS y p50/p95 por frame, estimación de cámaras a 10/15 FPS con 20 % de margen) y `bench/vlm.py` (sonda de Ollama/LM Studio); JSON medidos en `bench/salida/` y conclusiones en `docs/08-gpus.md`. En la RTX 3060: yolo11n 46,4 FPS / p50 18,2 ms a 640 sin tracking; con tracking 30,7 FPS / p50 30,8 ms, es decir 2 cámaras a 10 FPS o 1 a 15. Ni Ollama (11434) ni LM Studio (1234) respondían, así que el VLM queda sin medir. 263/263 tests. |
 | 2026-10-28 | **Revision y pulido (Claude)**: caras (cajas YuNet xywh), IDs estables + confirmacion de entrada, clasificador de actividad reescrito con votacion, lector de camara y pose/caras en hilos (11 -> ~18-20 fps; 960x540 por limite del driver a 720p), snapshot limpio para zonas, middleware anti-CSRF y anti-proxy sin token, backend de camara portable (Linux). Suite 267. |
 
+| 2026-10-29 | **Ronda 3**: dos terminales (opencode) hicieron percepción (A) y eventos/plataforma (B) y se pararon a medias; Claude revisó, integró y commiteó su trabajo. Fallos reales corregidos al revisar: histéresis de líneas comparaba un producto vectorial (no píxeles), el cooldown inicial suprimía el primer cruce, y los objetos globales no se reiniciaban fuera de franja. 294 tests (16 nuevos en `tests/test_percepcion_ronda3.py`). GUI v3 completa hecha por Claude; `/video.mjpg?limpio=1` añadido. |
+
 ## Datos técnicos acumulados
 
 - GPU: NVIDIA RTX 3060 (driver 580.97). torch 2.6.0+cu124,
@@ -76,6 +81,8 @@
 - FPS medidos al primer arranque del dashboard: ~7 (calentando), pendiente valor estable.
 
 ## Aprendizajes
+
+- **Medio cuerpo (29/10):** con la cámara de escritorio los hombros salen con confianza ~0,9 pero caderas 0,02–0,4 y rodillas ~0,01. Con eso **sentado vs de pie no se puede decidir de forma fiable por pose**. Para mejorar de verdad: colocar la cámara más lejos/alta para ver caderas y rodillas, o usar contexto (mesa, portátil, movimiento). `eval/` mide hoy solo 4 clips con etiquetas rápidas: no es ground truth.
 
 (vacío — cada fase deja aquí qué aprendimos, en especial lo que
 aporte al futuro módulo de escalada)
