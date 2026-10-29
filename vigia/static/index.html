@@ -235,11 +235,14 @@
         <select id="flimite" class="btn sel" title="Número de eventos">
           <option>15</option><option selected>50</option><option>100</option><option>300</option><option>500</option>
         </select>
+        <label class="sr" for="fpersona">Persona</label>
+        <input id="fpersona" class="field mini" type="number" min="0" placeholder="Persona #" title="Filtrar por id de persona">
         <button class="btn sm" id="btnRefrescar"><svg class="i s"><use href="#i-refrescar"/></svg>Actualizar</button>
         <span class="crece"></span>
         <span class="hint" id="evAviso"></span>
       </div>
       <div class="rows" id="hist" aria-live="polite"><div class="empty">cargando…</div></div>
+      <div class="mas"><button class="btn" id="evMas" hidden>Cargar más</button></div>
     </div>
   </section>
 </section>
